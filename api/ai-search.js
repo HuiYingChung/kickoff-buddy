@@ -1,5 +1,11 @@
 'use strict';
 
+// /api/ai-search — OpenAI Responses API with the web_search_preview tool.
+// Used for features that may need current facts
+// (Ask What Just Happened, Decision Explainer, Momentum & Tactics).
+
+const { checkRateLimit } = require('../lib/ratelimit');
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -10,6 +16,12 @@ module.exports = async function handler(req, res) {
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  const rl = checkRateLimit(req);
+  if (!rl.allowed) {
+    res.status(429).json({ error: { message: rl.message } });
     return;
   }
 
@@ -24,7 +36,7 @@ module.exports = async function handler(req, res) {
     model:             body.model             || 'gpt-4o',
     tools:             [{ type: 'web_search_preview' }],
     input:             body.input             || '',
-    max_output_tokens: body.max_output_tokens || 1200,
+    max_output_tokens: body.max_output_tokens ?? 1200,
   });
 
   try {

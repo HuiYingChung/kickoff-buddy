@@ -12,7 +12,9 @@
 
    APIs:
    • football-data.org  — live World Cup match data
-   • OpenAI GPT-4o      — all AI explanations (via /api/ai proxy)
+   • OpenAI             — all AI explanations
+       - /api/ai         (chat completions)  → guide, teams, matchday
+       - /api/ai-search  (responses + web search) → ask, decision, momentum
 
    Architecture:
    ┌──────────────────────────────────────────────────────┐
@@ -22,9 +24,11 @@
    │              ┌────────┴────────┐                    │
    │            true              false                   │
    │              │                  │                    │
-   │        mockResponses       callOpenAI()              │
-   │              │            (/api/ai proxy)            │
-   │              └────────┬────────┘                    │
+   │        mockResponses     SEARCH_TASKS?               │
+   │              │          ┌───────┴───────┐            │
+   │              │   callOpenAIWithSearch  callOpenAI    │
+   │              │     (/api/ai-search)   (/api/ai)      │
+   │              └────────┬───────────────────┘          │
    │                  renderOutput()                      │
    └──────────────────────────────────────────────────────┘
 ═══════════════════════════════════════════════════════════════ */
@@ -36,7 +40,26 @@
 ───────────────────────────────────────────────────────────── */
 const USE_MOCK_AI = false;
 
-// API keys are kept server-side in proxy.js — do not add them here
+// API keys/credentials are kept server-side (proxy.js locally, api/*.js on
+// Vercel) — never add them here.
+
+// ── AI providers ──────────────────────────────────────────────
+// This app uses TWO AI providers, chosen per feature:
+//   • IBM Granite (via watsonx.ai)  → /api/ai        (chat, no search)
+//   • OpenAI                        → /api/ai-search (web search)
+// The Granite model is configured server-side (WATSONX_MODEL_ID).
+const OPENAI_MODEL       = "gpt-4o";        // model for the search endpoint
+const OPENAI_MODEL_LABEL = "GPT-4o";        // label on search-based cards
+const GRANITE_LABEL      = "IBM Granite";   // label on chat-based cards
+// NOTE: if you change OPENAI_MODEL, verify it supports the Responses API
+// `web_search_preview` tool used by /api/ai-search.
+
+// Tasks that need live web search (OpenAI). Others use Granite (watsonx).
+const SEARCH_TASKS = new Set(["ask", "decision", "momentum"]);
+
+// Updated per request in getAIResponse so each result card shows the right
+// provider. Safe because a card renders synchronously to completion.
+let currentAILabel = GRANITE_LABEL;
 
 /* ─────────────────────────────────────────────────────────────
    LIVE MATCH DATA — football-data.org API
@@ -101,7 +124,8 @@ async function populateMatchDropdown() {
   select.innerHTML = '<option value="">Loading live matches…</option>';
   try {
     const matches = await fetchLiveMatches();
-    matches.sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Sort by kickoff time. Raw API objects expose `utcDate`, not `date`.
+    matches.sort((a, b) => new Date(a.utcDate || 0) - new Date(b.utcDate || 0));
     select.innerHTML = "";
     matches.forEach((m) => {
       const data = matchToData(m);
@@ -125,20 +149,20 @@ async function populateMatchDropdown() {
 /* ─────────────────────────────────────────────────────────────
    OPENAI INTEGRATION
 ───────────────────────────────────────────────────────────── */
-async function callOpenAI(prompt) {
+// Granite (IBM watsonx.ai) — for features that don't need web search.
+async function callGranite(prompt) {
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 900,
       temperature: 0.7,
     }),
   });
   const data = await res.json();
-  if (data.error) throw new Error(`OpenAI: ${data.error.message}`);
-  return data.choices[0].message.content;
+  if (data.error) throw new Error(`AI: ${data.error.message}`);
+  return data.choices?.[0]?.message?.content ?? "";
 }
 
 async function callOpenAIWithSearch(prompt) {
@@ -146,7 +170,7 @@ async function callOpenAIWithSearch(prompt) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model: OPENAI_MODEL,
       input: prompt,
       max_output_tokens: 1200,
     }),
@@ -297,6 +321,13 @@ RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–
 TASK: Answer the user's input in the most helpful, beginner-friendly way for a soccer context.
 USER INPUT: "${userQuestion || "None"}"`;
 
+  // Only some tasks are routed through the web-search endpoint.
+  const hasSearch = SEARCH_TASKS.has(taskType);
+  const searchRule = hasSearch
+    ? `- You have web search available. If the CONFIRMED MATCH EVENTS above are incomplete or do not cover what is being asked (e.g. VAR decisions, cancelled goals, specific incidents not in the API data), use web search to find accurate information from reliable sources such as BBC Sport, ESPN, FIFA.com, or official club sites. When you use search, briefly note what you found and from where.
+- If you genuinely cannot find or confirm something even after searching, say so honestly rather than guessing.`
+    : `- Base your answer on the match context and confirmed events above plus general soccer knowledge. Do NOT invent specific live facts (scores, incidents, line-ups) that are not in the confirmed data — if something cannot be confirmed, say so honestly.`;
+
   return `
 You are Kickoff Buddy, a warm, patient, beginner-friendly AI soccer companion.
 
@@ -314,9 +345,11 @@ ${buildMatchEventsContext(events)}
 ${specificInstructions}
 
 GENERAL RULES (apply to every response):
+- Answer exactly what was asked — nothing more, nothing less — and stay factual.
+- Never claim an event happened unless it is in the CONFIRMED MATCH EVENTS above (or you found it via web search and say where). If something cannot be confirmed, say so plainly, then explain the underlying concept so the user still learns something.
+- SCOPE: only answer questions about soccer, this match, the World Cup, the rules, or the matchday experience. If the input is off-topic (homework, coding, politics, weather, recipes, general chit-chat, etc.), do not answer it — briefly say it's outside Kickoff Buddy's scope and steer back to the match.
 - Write in simple, warm, beginner-friendly language. Always explain jargon when you use it.
-- You have web search available. If the CONFIRMED MATCH EVENTS above are incomplete or do not cover what is being asked (e.g. VAR decisions, cancelled goals, specific incidents not in the API data), use web search to find accurate information from reliable sources such as BBC Sport, ESPN, FIFA.com, or official club sites. When you use search, briefly note what you found and from where.
-- If you genuinely cannot find or confirm something even after searching, say so honestly rather than guessing.
+${searchRule}
 - Make the user feel welcome and confident — never embarrassed for not knowing something.
 
 Respond now:`.trim();
@@ -334,7 +367,13 @@ async function getAIResponse(taskType, userContext, matchData, userQuestion) {
 
   const events = matchData.id ? await fetchMatchEvents(matchData.id) : null;
   const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events);
-  const text = await callOpenAIWithSearch(prompt);
+  // Search tasks (ask/decision/momentum) use OpenAI web search; the rest use
+  // IBM Granite via watsonx. Set the card label to match the provider used.
+  const useSearch = SEARCH_TASKS.has(taskType);
+  currentAILabel = useSearch ? OPENAI_MODEL_LABEL : GRANITE_LABEL;
+  const text = useSearch
+    ? await callOpenAIWithSearch(prompt)
+    : await callGranite(prompt);
   return aiTextToCard(text, matchData, userContext, taskType);
 }
 
@@ -713,7 +752,7 @@ function ticketCard(matchData, userContext, subtitle, bodyHTML) {
           ["Stage", matchData.stage, ""],
           ["Mode", momentLabel[userContext.moment] || "", ""],
           ["Level", levelLabel[userContext.knowledge] || "", ""],
-          ["AI", "GPT-4o", "stub-ai"],
+          ["AI", currentAILabel, "stub-ai"],
         ])}
       </div>
     </div>
@@ -721,12 +760,14 @@ function ticketCard(matchData, userContext, subtitle, bodyHTML) {
   </div>`;
 }
 
-/* Build a simple result section block */
+/* Build a simple result section block.
+   eyebrow + title are always plain text (often AI-generated), so they are
+   HTML-escaped here. content is pre-rendered HTML and passed through. */
 function rs(eyebrow, title, content) {
   return `
   <div class="result-section">
-    <div class="result-section__eyebrow">${eyebrow}</div>
-    <div class="result-section__title">${title}</div>
+    <div class="result-section__eyebrow">${escapeHTML(eyebrow)}</div>
+    <div class="result-section__title">${escapeHTML(title)}</div>
     <div class="result-section__text">${content}</div>
   </div>`;
 }
@@ -852,7 +893,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialise the first tab
   activateTab("before");
-  // Load live World Cup matches from BALLDONTLIE API
+  // Load live World Cup matches from the football-data.org API
   populateMatchDropdown();
 });
 

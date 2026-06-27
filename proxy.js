@@ -14,11 +14,14 @@ const https = require('https');
 const fs    = require('fs');
 const path  = require('path');
 
+const { watsonxChat }    = require('./lib/watsonx');
+const { checkRateLimit } = require('./lib/ratelimit');
+
 const PORT              = process.env.PORT || 3001;
 const FOOTBALL_DATA_KEY = process.env.FOOTBALL_DATA_KEY;
 const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
 
-// Fail fast if keys are missing — never fall back to hardcoded values
+// Fail fast if the keys needed for live match data + web search are missing.
 if (!FOOTBALL_DATA_KEY) {
   console.error('ERROR: FOOTBALL_DATA_KEY environment variable is not set.');
   process.exit(1);
@@ -28,12 +31,25 @@ if (!OPENAI_API_KEY) {
   process.exit(1);
 }
 
+// watsonx (Granite) powers /api/ai. Warn but don't exit if it's not yet
+// configured, so the search-based features can still be tested.
+if (!process.env.WATSONX_API_KEY || !process.env.WATSONX_PROJECT_ID || !process.env.WATSONX_URL) {
+  console.warn('WARNING: WATSONX_API_KEY / WATSONX_PROJECT_ID / WATSONX_URL not all set — Granite (/api/ai) features will return an error until configured.');
+}
+
+// Small helper: send a JSON response.
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
 const MIME = {
   '.html': 'text/html',
   '.css':  'text/css',
   '.js':   'application/javascript',
   '.json': 'application/json',
   '.png':  'image/png',
+  '.svg':  'image/svg+xml',
   '.ico':  'image/x-icon',
 };
 
@@ -52,6 +68,9 @@ const server = http.createServer((req, res) => {
 
   // OpenAI Responses API with web_search_preview tool
   if (req.url === '/api/ai-search' && req.method === 'POST') {
+    const rl = checkRateLimit(req);
+    if (!rl.allowed) { sendJson(res, 429, { error: { message: rl.message } }); return; }
+
     let body = '';
     let byteCount = 0;
 
@@ -79,7 +98,7 @@ const server = http.createServer((req, res) => {
         model:             parsed.model             || 'gpt-4o',
         tools:             [{ type: 'web_search_preview' }],
         input:             parsed.input             || '',
-        max_output_tokens: parsed.max_output_tokens || 1200,
+        max_output_tokens: parsed.max_output_tokens ?? 1200,
       });
 
       const options = {
@@ -112,68 +131,39 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // OpenAI proxy — keeps the API key server-side
+  // Granite proxy (IBM watsonx.ai) — keeps credentials server-side.
   if (req.url === '/api/ai' && req.method === 'POST') {
+    const rl = checkRateLimit(req);
+    if (!rl.allowed) { sendJson(res, 429, { error: { message: rl.message } }); return; }
+
     let body = '';
     let byteCount = 0;
 
     req.on('data', chunk => {
       byteCount += chunk.length;
       if (byteCount > MAX_BODY_BYTES) {
-        res.writeHead(413);
-        res.end(JSON.stringify({ error: 'Request body too large.' }));
+        sendJson(res, 413, { error: { message: 'Request body too large.' } });
         req.destroy();
         return;
       }
       body += chunk;
     });
 
-    req.on('end', () => {
-      // Validate JSON before forwarding
+    req.on('end', async () => {
       let parsed;
       try {
         parsed = JSON.parse(body);
       } catch {
-        res.writeHead(400);
-        res.end(JSON.stringify({ error: 'Invalid JSON.' }));
+        sendJson(res, 400, { error: { message: 'Invalid JSON.' } });
         return;
       }
 
-      // Only allow the fields the app actually needs
-      const safe = JSON.stringify({
-        model:       parsed.model       || 'gpt-4o',
+      const result = await watsonxChat({
         messages:    parsed.messages    || [],
-        max_tokens:  parsed.max_tokens  || 900,
-        temperature: parsed.temperature || 0.7,
+        maxTokens:   parsed.max_tokens  ?? 900,
+        temperature: parsed.temperature ?? 0.7,
       });
-
-      const options = {
-        hostname: 'api.openai.com',
-        path:     '/v1/chat/completions',
-        method:   'POST',
-        headers:  {
-          'Content-Type':   'application/json',
-          'Content-Length': Buffer.byteLength(safe),
-          'Authorization':  `Bearer ${OPENAI_API_KEY}`,
-        },
-      };
-
-      const apiReq = https.request(options, apiRes => {
-        let data = '';
-        apiRes.on('data', chunk => data += chunk);
-        apiRes.on('end', () => {
-          res.writeHead(apiRes.statusCode, { 'Content-Type': 'application/json' });
-          res.end(data);
-        });
-      });
-
-      apiReq.on('error', err => {
-        res.writeHead(502);
-        res.end(JSON.stringify({ error: err.message }));
-      });
-
-      apiReq.write(safe);
-      apiReq.end();
+      sendJson(res, result.status, result.data);
     });
 
     return;
@@ -227,13 +217,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve static files — path traversal protection
-  const safePath = path.normalize(req.url === '/' ? '/index.html' : req.url);
+  // Serve static files.
+  // Strip query string, then normalise to defend against path traversal.
+  const urlPath  = (req.url === '/' ? '/index.html' : req.url).split('?')[0];
+  const safePath = path.normalize(urlPath);
   const filePath = path.join(__dirname, safePath);
 
-  if (!filePath.startsWith(__dirname + path.sep) && filePath !== path.join(__dirname, 'index.html')) {
+  // 1) Must stay inside the project directory (no ../ escapes).
+  if (!filePath.startsWith(__dirname + path.sep)) {
     res.writeHead(403);
     res.end('Forbidden');
+    return;
+  }
+
+  // 2) Never serve dotfiles (e.g. .env, .gitignore) — they may hold secrets.
+  if (path.basename(filePath).startsWith('.')) {
+    res.writeHead(404);
+    res.end('Not found');
+    return;
+  }
+
+  // 3) Only serve known, safe static file types. Anything else (including
+  //    .js server files, .json with secrets, etc. is still allowed only via
+  //    the explicit allowlist below).
+  const ext = path.extname(filePath).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(MIME, ext)) {
+    res.writeHead(404);
+    res.end('Not found');
     return;
   }
 
@@ -243,8 +253,7 @@ const server = http.createServer((req, res) => {
       res.end('Not found');
       return;
     }
-    const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain' });
+    res.writeHead(200, { 'Content-Type': MIME[ext] });
     res.end(data);
   });
 });

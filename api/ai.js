@@ -1,5 +1,12 @@
 'use strict';
 
+// /api/ai — chat completions served by IBM Granite via watsonx.ai.
+// Used for features that do NOT need live web search
+// (Match Guide, Choose My Team, Matchday Guide).
+
+const { watsonxChat }    = require('../lib/watsonx');
+const { checkRateLimit } = require('../lib/ratelimit');
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -9,36 +16,22 @@ module.exports = async function handler(req, res) {
   }
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
+    res.status(405).json({ error: { message: 'Method not allowed' } });
     return;
   }
 
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  if (!OPENAI_API_KEY) {
-    res.status(500).json({ error: 'Server misconfigured: missing API key.' });
+  const rl = checkRateLimit(req);
+  if (!rl.allowed) {
+    res.status(429).json({ error: { message: rl.message } });
     return;
   }
 
   const body = req.body || {};
-  const payload = JSON.stringify({
-    model:       body.model       || 'gpt-4o',
+  const result = await watsonxChat({
     messages:    body.messages    || [],
-    max_tokens:  body.max_tokens  || 900,
-    temperature: body.temperature || 0.7,
+    maxTokens:   body.max_tokens  ?? 900,
+    temperature: body.temperature ?? 0.7,
   });
 
-  try {
-    const upstream = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: payload,
-    });
-    const data = await upstream.json();
-    res.status(upstream.status).json(data);
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
+  res.status(result.status).json(result.data);
 };
