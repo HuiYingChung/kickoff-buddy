@@ -42,6 +42,7 @@ const USE_MOCK_AI = false;
    LIVE MATCH DATA — football-data.org API
 ───────────────────────────────────────────────────────────── */
 let liveMatches = {};
+const matchEventCache = {};
 
 async function fetchLiveMatches() {
   const res = await fetch('/api/matches');
@@ -140,11 +141,30 @@ async function callOpenAI(prompt) {
   return data.choices[0].message.content;
 }
 
+async function callOpenAIWithSearch(prompt) {
+  const res = await fetch("/api/ai-search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      input: prompt,
+      max_output_tokens: 1200,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(`OpenAI: ${data.error.message}`);
+  const output = data.output || [];
+  const msgItem = output.find((o) => o.type === "message");
+  const textItem = msgItem?.content?.find((c) => c.type === "output_text");
+  if (!textItem?.text) throw new Error("No response received from AI.");
+  return textItem.text;
+}
+
 /* ─────────────────────────────────────────────────────────────
    PROMPT BUILDER
    Constructs a structured prompt for OpenAI GPT-4o.
 ───────────────────────────────────────────────────────────── */
-function buildPrompt(userContext, matchData, taskType, userQuestion) {
+function buildPrompt(userContext, matchData, taskType, userQuestion, events = null) {
   const knowledgeMap = {
     none: "I know nothing about soccer",
     beginner: "I am a beginner",
@@ -171,6 +191,112 @@ function buildPrompt(userContext, matchData, taskType, userQuestion) {
       ? "Final result"
       : "Upcoming";
 
+  const taskInstructions = {
+    guide: `
+TASK: Generate a personalised beginner match guide for this specific match.
+FOCUS ON:
+1. Introduce the two teams in simple terms — who they are, their playing style, and what is at stake for each in this match.
+2. Tailor the depth to the user's knowledge level (${knowledgeMap[userContext.knowledge] || userContext.knowledge}).
+3. Give exactly 3 specific things to watch for in THIS match — not generic soccer tips.
+4. Briefly explain the 1–2 rules most relevant to this match's context.
+5. Close with a short, warm note that makes the user feel ready and excited.
+DO NOT: Predict the result. Do not give a generic soccer lesson — everything must connect to this match.
+RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
+## Match Overview
+## The Two Teams
+## Playing Styles
+## 3 Things to Watch
+## Rules You May Need
+## You're Ready
+For "## 3 Things to Watch" only, format each item as: 1. **Heading**: Description`,
+
+    ask: `
+TASK: Answer the user's specific question, using confirmed match event data where relevant.
+THE USER ASKED: "${userQuestion}"
+CRITICAL — USE CONFIRMED EVENTS: Cross-reference the CONFIRMED MATCH EVENTS above before answering.
+- If the user is asking about a specific event (e.g. "why was there a yellow card?"), check whether that event is in the confirmed data. If it is, reference the actual details (minute, player, team). If it is NOT, say clearly "I cannot confirm that happened in this match" and explain the concept educationally instead.
+- If the user asks about VAR or a cancelled goal, say you cannot confirm those from available data.
+- If the user asks a general soccer question not tied to a specific event, answer educationally.
+FOCUS ON:
+1. Answer EXACTLY what the user asked.
+2. If the event is confirmed, explain what happened and what caused it with the real details.
+3. Explain why it matters.
+4. Tell the user what to watch for next.
+DO NOT: Invent specific details about events not in the confirmed data. Stay on the question.
+RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
+## Simple Explanation
+## What Caused It
+## Why It Matters
+## What to Watch Next`,
+
+    decision: `
+TASK: Help the user understand a referee or VAR decision, using confirmed match event data.
+THE DECISION: "${userQuestion}"
+CRITICAL — FACT-CHECK FIRST: Before explaining, cross-reference the CONFIRMED MATCH EVENTS above.
+- Yellow card / Red card: Check if any bookings are listed. If none, say clearly "No cards were issued in this match" before explaining what a card means in general.
+- Substitution: Check if substitutions are listed. If none, say "No substitutions have been made yet."
+- Goal cancelled / VAR review: These are NOT tracked in the data. State honestly that you cannot confirm this from available data, and direct the user to the official broadcast or FIFA report.
+- Game past 90': Check the match status. If FINISHED and score is available, the game has ended — infer if added time occurred from context.
+In ALL cases: be honest if the event did not happen or cannot be confirmed, then offer to explain what it would mean educationally.
+DO NOT: Claim any decision happened if it is not in the confirmed events. Do not invent details.
+RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
+## What This Decision Means
+## What the Referee Is Checking
+## Why Fans Disagree
+## What to Watch in the Replay
+## Trust & Transparency`,
+
+    momentum: `
+TASK: Explain the momentum or tactical shift, grounded in confirmed match events.
+THE SITUATION: "${userQuestion}"
+CRITICAL — GROUND YOUR ANSWER IN FACTS: Use the CONFIRMED MATCH EVENTS above to anchor your explanation.
+- If goals, substitutions, or cards have occurred, reference them as concrete reasons for any momentum shift (e.g. "a substitution at 65' by Team X" or "the red card at 72' changed the game").
+- If no events have been recorded yet, say the match data shows no major events yet and explain momentum shifts in general terms.
+- Do not invent events that are not in the confirmed data.
+FOCUS ON:
+1. What is visibly happening, connected to confirmed events where possible.
+2. Why momentum has shifted — using real data points from the match.
+3. What each coach is likely thinking given the actual match situation.
+4. What to watch for next.
+DO NOT: Predict the result. Do not reference events that are not in the confirmed data as if they happened.
+RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
+## What's Happening
+## Why Momentum Has Shifted
+## The Tactical Picture
+## The Human Side
+## What to Watch Next`,
+
+    teams: `
+TASK: Recommend 2–3 World Cup teams that suit this specific user's interests and personality.
+THE USER'S PREFERENCES: "${userQuestion}"
+FOCUS ON:
+1. Match the recommendations directly to what the user told you — explain WHY each team suits THEM personally.
+2. For each team, give a concrete "what to watch for" tip that a beginner can act on immediately.
+3. Keep recommendations personal and specific, not a history textbook.
+4. End with a brief note that any choice is valid — there are no wrong teams to support.
+DO NOT: List every team. Do not give long historical lectures. Do not recommend a team that clearly does not match the user's stated preferences.
+RESPONSE FORMAT — one ## heading per recommended team (the team name only), then exactly three lines:
+**Why this team:** [why it suits this specific user]
+**Why for a beginner:** [beginner-friendly tip]
+**What to watch:** [one concrete watching tip]
+Final section: ## Any Team is Valid`,
+
+    matchday: `
+TASK: Build a practical, actionable matchday preparation guide for the user's specific viewing context.
+THE VENUE: "${userQuestion}"
+FOCUS ON:
+1. Concrete steps the user should take before the match starts.
+2. What to expect on matchday specifically for their venue — home, bar, or stadium.
+3. Relevant fan etiquette and social tips for their context.
+4. Remind the user to verify venue rules, bag policies, transit, and ticketing with official FIFA and venue sources.
+DO NOT: Explain general soccer rules. Do not repeat basic information the user would already know. Stay focused on preparation, logistics, and confidence-building.
+RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–6 words max). One paragraph of detail per item. Final section: ## Official Sources Reminder`,
+  };
+
+  const specificInstructions = taskInstructions[taskType] || `
+TASK: Answer the user's input in the most helpful, beginner-friendly way for a soccer context.
+USER INPUT: "${userQuestion || "None"}"`;
+
   return `
 You are Kickoff Buddy, a warm, patient, beginner-friendly AI soccer companion.
 
@@ -184,22 +310,14 @@ MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
 - Status: ${statusInfo}
 - Score: ${scoreInfo}
 
-TASK TYPE: ${taskType}
-USER QUESTION / INPUT: ${userQuestion || "None"}
+${buildMatchEventsContext(events)}
+${specificInstructions}
 
-INSTRUCTIONS:
-1. Answer in very simple, warm, beginner-friendly language. No jargon without explanation.
-2. Structure your response clearly with these sections where relevant:
-   - Simple explanation
-   - Why it matters
-   - What to watch next
-   - Beginner-friendly analogy (if helpful)
-   - Confidence / official source note (if needed)
-3. If you are uncertain about a specific real-world fact, say so clearly.
-4. Never claim to know live scores, real-time events, or specific official decisions unless provided.
-5. Do not predict match results. Do not replace referees or coaches.
-6. When venue, ticketing, transit, or stadium policy details are asked about, remind the user to check official FIFA, venue, or ticketing sources.
-7. Make the user feel welcome and confident, not embarrassed.
+GENERAL RULES (apply to every response):
+- Write in simple, warm, beginner-friendly language. Always explain jargon when you use it.
+- You have web search available. If the CONFIRMED MATCH EVENTS above are incomplete or do not cover what is being asked (e.g. VAR decisions, cancelled goals, specific incidents not in the API data), use web search to find accurate information from reliable sources such as BBC Sport, ESPN, FIFA.com, or official club sites. When you use search, briefly note what you found and from where.
+- If you genuinely cannot find or confirm something even after searching, say so honestly rather than guessing.
+- Make the user feel welcome and confident — never embarrassed for not knowing something.
 
 Respond now:`.trim();
 }
@@ -209,40 +327,182 @@ Respond now:`.trim();
    All feature functions call this — not mock responses directly.
 ───────────────────────────────────────────────────────────── */
 async function getAIResponse(taskType, userContext, matchData, userQuestion) {
-  const prompt = buildPrompt(userContext, matchData, taskType, userQuestion);
-
   if (USE_MOCK_AI) {
     await delay(900 + Math.random() * 600);
     return getMockResponse(taskType, userContext, matchData, userQuestion);
   }
 
-  const text = await callOpenAI(prompt);
+  const events = matchData.id ? await fetchMatchEvents(matchData.id) : null;
+  const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events);
+  const text = await callOpenAIWithSearch(prompt);
   return aiTextToCard(text, matchData, userContext, taskType);
 }
 
-function aiTextToCard(text, matchData, userContext, taskType) {
-  const labels = {
-    guide: "Match Guide",
-    ask: "Live Explainer",
-    decision: "Decision Explainer",
-    momentum: "Momentum Explainer",
-    teams: "Team Finder",
-    matchday: "Matchday Guide",
-  };
-  const html = escapeHTML(text)
+/* ─────────────────────────────────────────────────────────────
+   AI RESPONSE RENDERING — task-specific parsers & renderers
+───────────────────────────────────────────────────────────── */
+
+/* Split AI text on ## headings → [{ title, content }] */
+function parseSections(text) {
+  const sections = [];
+  let current = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^## (.+)$/);
+    if (m) {
+      if (current) sections.push({ title: current.title, content: current.buf.join("\n").trim() });
+      current = { title: m[1].trim(), buf: [] };
+    } else if (current) {
+      current.buf.push(line);
+    }
+  }
+  if (current) sections.push({ title: current.title, content: current.buf.join("\n").trim() });
+  return sections;
+}
+
+/* Safe markdown → HTML (bold, italic, paragraphs) */
+function mdToHtml(text) {
+  return escapeHTML(text)
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/^#{1,3} (.+)$/gm, '<h4 class="result-section__title">$1</h4>')
     .replace(/\n\n+/g, "</p><p>")
+    .replace(/\n/g, "<br>")
     .replace(/^/, "<p>")
     .replace(/$/, "</p>");
-  const body = `<div class="result-section"><div class="result-section__text">${html}</div></div>`;
-  return ticketCard(
-    matchData,
-    userContext,
-    labels[taskType] || "AI Response",
-    body,
-  );
+}
+
+/* Parse "1. **Heading**: Description" list → [{ heading, desc }] */
+function parseWatchList(text) {
+  const items = [];
+  let current = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\d+\.\s+\*\*(.*?)\*\*[:\-–]?\s*(.*)/);
+    if (m) {
+      if (current) items.push(current);
+      current = { heading: m[1].trim(), desc: m[2].trim() };
+    } else if (current && line.trim()) {
+      current.desc += " " + line.trim();
+    }
+  }
+  if (current) items.push(current);
+  return items;
+}
+
+/* Dispatcher — routes to the correct task renderer */
+function aiTextToCard(text, matchData, userContext, taskType) {
+  const sections = parseSections(text);
+  switch (taskType) {
+    case "guide":    return renderGuide(sections, text, matchData, userContext);
+    case "ask":      return renderAsk(sections, text, matchData, userContext);
+    case "decision": return renderDecision(sections, text, matchData, userContext);
+    case "momentum": return renderMomentum(sections, text, matchData, userContext);
+    case "teams":    return renderTeams(sections, text, matchData, userContext);
+    case "matchday": return renderMatchday(sections, text, matchData, userContext);
+    default:         return renderGeneric(text, matchData, userContext);
+  }
+}
+
+/* ── Guide: overview + teams + styles + watch list + rules + encouragement ── */
+function renderGuide(sections, raw, matchData, userContext) {
+  const eyebrows = ["Simple Summary", "The Teams", "Playing Styles", "3 Things to Watch", "Rules You May Need", "You're Ready"];
+  const body = sections.map((s, i) => {
+    if (/3 things/i.test(s.title)) {
+      const items = parseWatchList(s.content);
+      return rs(eyebrows[i] || "", s.title, items.length ? watchList(items) : mdToHtml(s.content));
+    }
+    return rs(eyebrows[i] || "", s.title, mdToHtml(s.content));
+  }).join("") || `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
+  return ticketCard(matchData, userContext, "Match Guide", body);
+}
+
+/* ── Ask: direct answer → cause → significance → what to watch ── */
+function renderAsk(sections, raw, matchData, userContext) {
+  const eyebrows = ["Simple Explanation", "Context", "Why It Matters", "Keep an Eye On…"];
+  const body =
+    (sections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+      `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`) +
+    noticeBox("For official rulings on specific decisions, always refer to the match broadcast or official FIFA communications.", "info");
+  return ticketCard(matchData, userContext, "Live Explainer", body);
+}
+
+/* ── Decision: meaning + process + controversy + replay tip + trust notice ── */
+function renderDecision(sections, raw, matchData, userContext) {
+  const eyebrows = ["What This Means", "The Process", "The Controversy", "Replay Tip"];
+  const mainSections = sections.filter((_, i) => i < 4);
+  const trustSection = sections.find((s) => /trust/i.test(s.title));
+  const main =
+    mainSections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+    `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
+  const trust = trustSection
+    ? `<div class="notice-box notice-box--info">
+        <div class="notice-box__icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-var"/></svg></div>
+        <p class="notice-box__text"><strong>Trust &amp; transparency:</strong> ${escapeHTML(trustSection.content.replace(/\n+/g, " "))} This is context and education — not an official ruling.</p>
+      </div>`
+    : noticeBox("This is educational context — not an official ruling. The referee’s decision stands.", "info");
+  return ticketCard(matchData, userContext, "Decision Explainer", main + trust);
+}
+
+/* ── Momentum: what's happening + why + tactics + human side + watch next ── */
+function renderMomentum(sections, raw, matchData, userContext) {
+  const eyebrows = ["Reading the Moment", "The Explanation", "Coach’s Perspective", "The Human Side", "Stay Focused On…"];
+  const body =
+    (sections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+      `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`) +
+    noticeBox("This is contextual explanation. Actual tactical decisions depend on the specific teams and coaches involved.", "");
+  return ticketCard(matchData, userContext, "Momentum & Tactics Explainer", body);
+}
+
+/* ── Teams: one teamCard per team + note ── */
+function renderTeams(sections, raw, matchData, userContext) {
+  const isNote = (s) => /any team|valid|no wrong/i.test(s.title + " " + s.content);
+  const teamSections = sections.filter((s) => !isNote(s));
+  const noteSection  = sections.find((s) => isNote(s));
+  const cards = teamSections.map((s) => teamCard(escapeHTML(s.title), mdToHtml(s.content))).join("");
+  const noteHtml = noteSection
+    ? noticeBox(escapeHTML(noteSection.content), "info")
+    : noticeBox("You can support any team for any reason. There are no wrong choices in fan culture.", "info");
+  const body =
+    rs("Your team recommendations", "Based on what you told us", `<div class="team-cards">${cards || mdToHtml(raw)}</div>`) +
+    noteHtml;
+  return ticketCard({ label: "World Cup 2026", stage: "Fan Matching", date: "" }, userContext, "Team Finder", body);
+}
+
+/* ── Matchday: interactive checklist + official sources notice ── */
+function renderMatchday(sections, raw, matchData, userContext) {
+  const isNote = (s) => /official|source|reminder/i.test(s.title);
+  const checkSections = sections.filter((s) => !isNote(s));
+  const noteSection   = sections.find((s) =>  isNote(s));
+  const iconFor = (title) => {
+    if (/ticket|book/i.test(title))              return "ticket";
+    if (/transport|transit|travel|alarm/i.test(title)) return "transit";
+    if (/crowd|noise|atmospher/i.test(title))    return "crowd";
+    if (/bag|pack/i.test(title))                 return "bag";
+    if (/dress|wear|kit|scarf/i.test(title))     return "scarf";
+    if (/stadium|arrive|gate|early/i.test(title)) return "stadium";
+    if (/broadcast|stream|channel|tv/i.test(title)) return "source";
+    if (/pitch|kickoff|guide|read/i.test(title)) return "pitch";
+    return "source";
+  };
+  const checklistHTML = checkSections.length
+    ? `<div class="checklist">${checkSections.map((s, i) =>
+        checklistItem(iconFor(s.title), escapeHTML(s.title), escapeHTML(s.content), `ai-cl-${i}`)
+      ).join("")}</div>`
+    : `<div class="result-section__text">${mdToHtml(raw)}</div>`;
+  const noteHtml = noteSection
+    ? noticeBox(escapeHTML(noteSection.content), "")
+    : noticeBox("For bag policies, venue rules, transit schedules, and ticket validity, always check the official FIFA website, your specific venue, and local transit authorities.", "");
+  const venueCtx = userContext.viewContext;
+  const venue = venueCtx === "stadium" ? "Stadium" : venueCtx === "bar" ? "Bar / Watch Party" : "Home Viewing";
+  const body =
+    rs("Your checklist", `Prepared for: ${venue}`,
+      `<p style="margin-bottom:14px">Tap each item to check it off as you prepare.</p>${checklistHTML}`
+    ) + noteHtml;
+  return ticketCard(matchData, userContext, `Matchday Confidence Guide — ${venue}`, body);
+}
+
+/* ── Generic fallback ── */
+function renderGeneric(text, matchData, userContext) {
+  const body = `<div class="result-section"><div class="result-section__text">${mdToHtml(text)}</div></div>`;
+  return ticketCard(matchData, userContext, "AI Response", body);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -250,6 +510,97 @@ function aiTextToCard(text, matchData, userContext, taskType) {
 ───────────────────────────────────────────────────────────── */
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MATCH EVENT DATA — fetch, parse, format for AI prompt
+───────────────────────────────────────────────────────────── */
+
+async function fetchMatchEvents(matchId) {
+  if (matchEventCache[matchId]) return matchEventCache[matchId];
+  try {
+    const res = await fetch(`/api/match/${matchId}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const parsed = parseMatchEvents(data);
+    matchEventCache[matchId] = parsed;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function parseMatchEvents(data) {
+  const status = data.status || "SCHEDULED";
+  const isPlayed = ["FINISHED", "LIVE", "IN_PLAY", "PAUSED"].includes(status);
+  return {
+    isPlayed,
+    goals: (data.goals || []).map((g) => ({
+      minute: g.minute,
+      extra:  g.minuteExtra || null,
+      team:   g.team?.name  || "?",
+      scorer: g.scorer?.name || "Unknown",
+      type:   g.type || "REGULAR",
+    })),
+    bookings: (data.bookings || []).map((b) => ({
+      minute: b.minute,
+      team:   b.team?.name   || "?",
+      player: b.player?.name || "Unknown",
+      card:   b.card,
+    })),
+    substitutions: (data.substitutions || []).map((s) => ({
+      minute:    s.minute,
+      team:      s.team?.name      || "?",
+      playerIn:  s.playerIn?.name  || "?",
+      playerOut: s.playerOut?.name || "?",
+    })),
+  };
+}
+
+function buildMatchEventsContext(events) {
+  if (!events) {
+    return "CONFIRMED MATCH EVENTS: Could not load event data. Do not claim any specific event occurred.";
+  }
+  if (!events.isPlayed) {
+    return "CONFIRMED MATCH EVENTS: This match has not started yet — no events have occurred.";
+  }
+
+  const lines = ["CONFIRMED MATCH EVENTS (from official API — treat these as facts):"];
+
+  if (events.goals.length === 0) {
+    lines.push("- Goals: None recorded in this match.");
+  } else {
+    events.goals.forEach((g) => {
+      const time = g.extra ? `${g.minute}+${g.extra}'` : `${g.minute}'`;
+      lines.push(`- Goal: ${time} — ${g.scorer} (${g.team})`);
+    });
+  }
+
+  if (events.bookings.length === 0) {
+    lines.push("- Yellow/Red cards: None issued in this match.");
+  } else {
+    events.bookings.forEach((b) => {
+      const name =
+        b.card === "YELLOW"      ? "Yellow card" :
+        b.card === "RED"         ? "Red card"    :
+        b.card === "YELLOW_RED"  ? "Second yellow (red)" : b.card;
+      lines.push(`- ${name}: ${b.minute}' — ${b.player} (${b.team})`);
+    });
+  }
+
+  if (events.substitutions.length === 0) {
+    lines.push("- Substitutions: None recorded in this match.");
+  } else {
+    events.substitutions.forEach((s) => {
+      lines.push(`- Substitution: ${s.minute}' — ${s.playerIn} on for ${s.playerOut} (${s.team})`);
+    });
+  }
+
+  lines.push(
+    "- VAR decisions and cancelled goals are NOT tracked in this data — if asked about these, state clearly you cannot confirm them from available data."
+  );
+
+  return lines.join("\n");
 }
 
 function getUserContext() {
@@ -609,9 +960,16 @@ async function askWhatHappened() {
     return;
   }
 
+  const outputId = "ask-output";
+
+  if (isOffTopic(question)) {
+    renderOutput(outputId, warningCard(question));
+    scrollToOutput(outputId);
+    return;
+  }
+
   const userContext = getUserContext();
   const matchData = getMatchData();
-  const outputId = "ask-output";
 
   showLoading(outputId, "Looking that up for you…");
   scrollToOutput(outputId);
@@ -656,13 +1014,19 @@ async function explainDecision() {
    FEATURE 4 — MOMENTUM & TACTICS
 ───────────────────────────────────────────────────────────── */
 async function explainMomentum() {
-  const situation =
-    document.getElementById("momentum-input")?.value?.trim() ||
-    "The match momentum has shifted.";
+  const rawInput = document.getElementById("momentum-input")?.value?.trim();
+  const situation = rawInput || "The match momentum has shifted.";
+
+  const outputId = "momentum-output";
+
+  if (rawInput && isOffTopic(rawInput)) {
+    renderOutput(outputId, warningCard(rawInput));
+    scrollToOutput(outputId);
+    return;
+  }
 
   const userContext = getUserContext();
   const matchData = getMatchData();
-  const outputId = "momentum-output";
 
   showLoading(outputId, "Analysing the shift…");
   scrollToOutput(outputId);
@@ -748,6 +1112,47 @@ function escapeHTML(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/* ─────────────────────────────────────────────────────────────
+   OFF-TOPIC GUARD
+───────────────────────────────────────────────────────────── */
+function isOffTopic(text) {
+  const t = (text || "").toLowerCase();
+  const blocked = [
+    /\bhomework\b|\bassignment\b|\bdo my \w+\b/,
+    /\bmath\b|\balgebra\b|\bcalculus\b|\bequation\b|\bgeometry\b/,
+    /\brecipe\b|\bcooking?\b|\bbak(e|ing)\b|\bingredient\b/,
+    /\bweather\b|\btemperature\b|\bforecast\b|\bclimate\b/,
+    /\bpolitics\b|\belection\b|\bpresident\b|\bgovernment\b/,
+    /\bstock market\b|\bcrypto\b|\bbitcoin\b/,
+    /\btranslat(e|ion)\b/,
+    /\btell me a joke\b|\bwrite me a\b|\bhelp me write\b/,
+    /\bwho are you\b|\bwhat are you\b|\bare you an ai\b/,
+    /\bwrite.*code\b|\bcode for me\b|\bprogramm/,
+  ];
+  return blocked.some((p) => p.test(t));
+}
+
+function warningCard(question) {
+  return `
+  <div class="result-card">
+    <div class="result-card__ticket-header" style="background:#7a5200;">
+      <div class="result-card__ticket-main">
+        <div class="result-card__title">Outside Kickoff Buddy's scope</div>
+        <div class="result-card__match" style="opacity:0.75;">${escapeHTML(question)}</div>
+      </div>
+    </div>
+    <div class="result-card__body">
+      ${noticeBox(
+        "Kickoff Buddy only answers questions about <strong>soccer rules, match events, tactics, and the World Cup experience</strong>. This question doesn't appear to be about the match.",
+        "info"
+      )}
+      <p style="margin-top:12px;font-size:0.88rem;color:var(--ref-neutral-60,#888);">
+        Try something like: <em>Why was that offside?</em> &nbsp;·&nbsp; <em>What just happened with the red card?</em> &nbsp;·&nbsp; <em>Why did the goal get cancelled?</em>
+      </p>
+    </div>
+  </div>`;
 }
 
 function errorCard(message) {

@@ -50,6 +50,68 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // OpenAI Responses API with web_search_preview tool
+  if (req.url === '/api/ai-search' && req.method === 'POST') {
+    let body = '';
+    let byteCount = 0;
+
+    req.on('data', chunk => {
+      byteCount += chunk.length;
+      if (byteCount > MAX_BODY_BYTES) {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: 'Request body too large.' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Invalid JSON.' }));
+        return;
+      }
+
+      const safe = JSON.stringify({
+        model:             parsed.model             || 'gpt-4o',
+        tools:             [{ type: 'web_search_preview' }],
+        input:             parsed.input             || '',
+        max_output_tokens: parsed.max_output_tokens || 1200,
+      });
+
+      const options = {
+        hostname: 'api.openai.com',
+        path:     '/v1/responses',
+        method:   'POST',
+        headers:  {
+          'Content-Type':   'application/json',
+          'Content-Length': Buffer.byteLength(safe),
+          'Authorization':  `Bearer ${OPENAI_API_KEY}`,
+        },
+      };
+
+      const apiReq = https.request(options, apiRes => {
+        let data = '';
+        apiRes.on('data', chunk => data += chunk);
+        apiRes.on('end', () => {
+          res.writeHead(apiRes.statusCode, { 'Content-Type': 'application/json' });
+          res.end(data);
+        });
+      });
+      apiReq.on('error', err => {
+        res.writeHead(502);
+        res.end(JSON.stringify({ error: err.message }));
+      });
+      apiReq.write(safe);
+      apiReq.end();
+    });
+
+    return;
+  }
+
   // OpenAI proxy — keeps the API key server-side
   if (req.url === '/api/ai' && req.method === 'POST') {
     let body = '';
@@ -129,6 +191,33 @@ const server = http.createServer((req, res) => {
       apiRes.on('data', chunk => body += chunk);
       apiRes.on('end', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(body);
+      });
+    }).on('error', err => {
+      res.writeHead(502);
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
+  // Individual match detail endpoint (events: goals, cards, substitutions)
+  if (req.url.startsWith('/api/match/') && req.method === 'GET') {
+    const matchId = req.url.slice('/api/match/'.length).split('?')[0];
+    if (!/^\d+$/.test(matchId)) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Invalid match ID.' }));
+      return;
+    }
+    const options = {
+      hostname: 'api.football-data.org',
+      path:     `/v4/matches/${matchId}`,
+      headers:  { 'X-Auth-Token': FOOTBALL_DATA_KEY },
+    };
+    https.get(options, apiRes => {
+      let body = '';
+      apiRes.on('data', chunk => body += chunk);
+      apiRes.on('end', () => {
+        res.writeHead(apiRes.statusCode, { 'Content-Type': 'application/json' });
         res.end(body);
       });
     }).on('error', err => {
