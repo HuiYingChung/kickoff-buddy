@@ -1,0 +1,16 @@
+{
+  "name": "kickoff-buddy",
+  "version": "1.0.0",
+  "description": "AI-powered World Cup companion for first-time fans — IBM June Challenge",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.0.0"
+  }
+}
