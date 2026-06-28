@@ -10,27 +10,40 @@
       Refine, API,
       Security          → Claude Code
 
-   APIs:
-   • football-data.org  — live World Cup match data
-   • OpenAI             — all AI explanations
-       - /api/ai         (chat completions)  → guide, teams, matchday
-       - /api/ai-search  (responses + web search) → ask, decision, momentum
+   APIs & AI roles:
+   • football-data.org  — live World Cup match data (events as ground truth)
+   • IBM Granite (watsonx.ai) — /api/ai — the EXPLAINER. Writes every final
+       answer the user reads, for all six features. Single on-screen voice.
+   • OpenAI GPT-4o (web search) — /api/ai-search — the FACT-CHECKER. For the
+       three live features only, it gathers verified "what happened" facts
+       first; those are then handed to Granite to explain.
+
+   Per-feature routing:
+   • guide / teams / matchday → Granite only (no live lookup needed).
+   • ask / decision / momentum → GPT-4o fact-check → Granite explains (hybrid).
 
    Architecture:
-   ┌──────────────────────────────────────────────────────┐
-   │  UI functions  →  getAIResponse()                    │
-   │                       │                              │
-   │              USE_MOCK_AI?                            │
-   │              ┌────────┴────────┐                    │
-   │            true              false                   │
-   │              │                  │                    │
-   │        mockResponses     SEARCH_TASKS?               │
-   │              │          ┌───────┴───────┐            │
-   │              │   callOpenAIWithSearch  callOpenAI    │
-   │              │     (/api/ai-search)   (/api/ai)      │
-   │              └────────┬───────────────────┘          │
-   │                  renderOutput()                      │
-   └──────────────────────────────────────────────────────┘
+   ┌────────────────────────────────────────────────────────────┐
+   │  UI functions  →  getAIResponse()                          │
+   │                       │                                    │
+   │              USE_MOCK_AI?                                  │
+   │              ┌────────┴────────┐                          │
+   │            true              false                         │
+   │              │                  │                          │
+   │        mockResponses     SEARCH_TASKS?                     │
+   │              │          ┌───────┴────────┐                 │
+   │              │        yes                no                │
+   │              │         │                  │                │
+   │              │  Stage 1: GPT-4o     (skip fact-check)      │
+   │              │  callOpenAIWithSearch       │               │
+   │              │  (/api/ai-search)           │               │
+   │              │         │                   │               │
+   │              │         └──── verifiedFacts ┘               │
+   │              │                  │                          │
+   │              │         Stage 2: callGranite (/api/ai)      │
+   │              └────────┬─────────┘                          │
+   │                  renderOutput()                            │
+   └────────────────────────────────────────────────────────────┘
 ═══════════════════════════════════════════════════════════════ */
 
 "use strict";
@@ -50,16 +63,26 @@ const USE_MOCK_AI = false;
 // The Granite model is configured server-side (WATSONX_MODEL_ID).
 const OPENAI_MODEL       = "gpt-4o";        // model for the search endpoint
 const OPENAI_MODEL_LABEL = "GPT-4o";        // label on search-based cards
-const GRANITE_LABEL      = "IBM Granite";   // label on chat-based cards
+const GRANITE_LABEL      = "IBM Granite";   // AI badge — Granite is the single voice
+// Shown as a small footer note when GPT-4o web search actually fed the answer.
+const SEARCH_PROVENANCE  = 'Live facts verified via <strong>GPT-4o</strong> web search — explained by <strong>IBM Granite</strong>';
 // NOTE: if you change OPENAI_MODEL, verify it supports the Responses API
 // `web_search_preview` tool used by /api/ai-search.
 
-// Tasks that need live web search (OpenAI). Others use Granite (watsonx).
-const SEARCH_TASKS = new Set(["ask", "decision", "momentum"]);
+// Two-model division of labour:
+//   • GPT-4o (web search) is the FACT-CHECKER — it gathers what actually
+//     happened in THIS match (live, changing facts).
+//   • IBM Granite (watsonx) is the EXPLAINER — it turns those verified facts
+//     plus the soccer rules into the warm, beginner-friendly answer the user
+//     reads. Granite is always the single voice on screen.
+// For these tasks Granite is fed web-verified facts from GPT-4o first.
+const SEARCH_TASKS = new Set(["ask", "decision", "momentum"]); // hybrid live tasks
 
 // Updated per request in getAIResponse so each result card shows the right
 // provider. Safe because a card renders synchronously to completion.
 let currentAILabel = GRANITE_LABEL;
+// Optional provenance line shown under the card body (HTML). Empty = no line.
+let currentAIProvenance = "";
 
 /* ─────────────────────────────────────────────────────────────
    LIVE MATCH DATA — football-data.org API
@@ -149,7 +172,8 @@ async function populateMatchDropdown() {
 /* ─────────────────────────────────────────────────────────────
    OPENAI INTEGRATION
 ───────────────────────────────────────────────────────────── */
-// Granite (IBM watsonx.ai) — for features that don't need web search.
+// Granite (IBM watsonx.ai) — the explainer. Writes the final answer for every
+// feature; on live tasks the prompt already contains GPT-4o's verified facts.
 async function callGranite(prompt) {
   const res = await fetch("/api/ai", {
     method: "POST",
@@ -185,10 +209,64 @@ async function callOpenAIWithSearch(prompt) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   PROMPT BUILDER
-   Constructs a structured prompt for OpenAI GPT-4o.
+   STAGE 1 — FACT-CHECKER PROMPT (GPT-4o + web search)
+   Builds a prompt whose ONLY job is to gather verified, current facts about
+   THIS match. GPT-4o does NOT write the beginner explanation — it produces a
+   short factual brief that Granite (Stage 2) then explains. This is the
+   "what actually happened" half of the two-model split.
 ───────────────────────────────────────────────────────────── */
-function buildPrompt(userContext, matchData, taskType, userQuestion, events = null) {
+function buildFactFindingPrompt(matchData, taskType, userQuestion, events = null) {
+  const scoreInfo = matchData.scoreDisplay
+    ? `${matchData.teamA} ${matchData.scoreDisplay} ${matchData.teamB}`
+    : "Not yet played";
+  const statusInfo = matchData.isLive
+    ? "LIVE now"
+    : matchData.isFinished
+      ? "Final result"
+      : "Upcoming";
+
+  const focusMap = {
+    ask:      `the user's question: "${userQuestion}"`,
+    decision: `this referee or VAR decision / incident: "${userQuestion}"`,
+    momentum: `the current momentum or tactical situation: "${userQuestion}"`,
+  };
+  const focus = focusMap[taskType] || `: "${userQuestion}"`;
+
+  return `
+You are a soccer FACT-CHECKER for one specific World Cup match. Your ONLY job is
+to gather verified, current facts — you are NOT writing anything for an end user.
+
+MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
+- Status: ${statusInfo}
+- Score: ${scoreInfo}
+
+${buildMatchEventsContext(events)}
+
+WHAT TO FIND: facts relevant to ${focus}
+
+INSTRUCTIONS:
+- Use web search to confirm what actually happened in THIS match — especially
+  anything not already in the CONFIRMED MATCH EVENTS above (e.g. VAR reviews,
+  cancelled goals, specific incidents). Prefer BBC Sport, ESPN, FIFA.com,
+  Reuters, or AP.
+- Report ONLY verified facts. After each, note the source in parentheses.
+- If you cannot confirm something, list it under UNCONFIRMED — never guess.
+- Do NOT explain rules, give tips, or write prose for a beginner. Output a
+  short factual brief only.
+
+OUTPUT FORMAT (keep under ~150 words):
+VERIFIED FACTS:
+- <fact> (source: <site>)
+UNCONFIRMED:
+- <thing you could not confirm>`.trim();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   STAGE 2 — EXPLAINER PROMPT (IBM Granite / watsonx)
+   Constructs the structured prompt that Granite turns into the final answer.
+   For live tasks it receives `verifiedFacts` from Stage 1 as ground truth.
+───────────────────────────────────────────────────────────── */
+function buildPrompt(userContext, matchData, taskType, userQuestion, events = null, verifiedFacts = null) {
   const knowledgeMap = {
     none: "I know nothing about soccer",
     beginner: "I am a beginner",
@@ -321,11 +399,16 @@ RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–
 TASK: Answer the user's input in the most helpful, beginner-friendly way for a soccer context.
 USER INPUT: "${userQuestion || "None"}"`;
 
-  // Only some tasks are routed through the web-search endpoint.
+  // Live tasks are fed web-verified facts gathered by GPT-4o (Stage 1).
   const hasSearch = SEARCH_TASKS.has(taskType);
+  const verifiedBlock = verifiedFacts
+    ? `VERIFIED LIVE FACTS (gathered and web-checked for you by a fact-checker — treat these as confirmed ground truth, on equal footing with the events above):
+${verifiedFacts}
+`
+    : "";
   const searchRule = hasSearch
-    ? `- You have web search available. If the CONFIRMED MATCH EVENTS above are incomplete or do not cover what is being asked (e.g. VAR decisions, cancelled goals, specific incidents not in the API data), use web search to find accurate information from reliable sources such as BBC Sport, ESPN, FIFA.com, or official club sites. When you use search, briefly note what you found and from where.
-- If you genuinely cannot find or confirm something even after searching, say so honestly rather than guessing.`
+    ? `- Your ground truth is the CONFIRMED MATCH EVENTS and the VERIFIED LIVE FACTS above — they were already gathered and web-verified for you. Base every claim about what happened in this match ONLY on those. You do NOT have live web access yourself, so do not promise to look anything up.
+- If neither the events nor the verified facts cover what is being asked, say so honestly and explain the underlying concept instead of guessing.`
     : `- Base your answer on the match context and confirmed events above plus general soccer knowledge. Do NOT invent specific live facts (scores, incidents, line-ups) that are not in the confirmed data — if something cannot be confirmed, say so honestly.`;
 
   return `
@@ -342,11 +425,11 @@ MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
 - Score: ${scoreInfo}
 
 ${buildMatchEventsContext(events)}
-${specificInstructions}
+${verifiedBlock}${specificInstructions}
 
 GENERAL RULES (apply to every response):
 - Answer exactly what was asked — nothing more, nothing less — and stay factual.
-- Never claim an event happened unless it is in the CONFIRMED MATCH EVENTS above (or you found it via web search and say where). If something cannot be confirmed, say so plainly, then explain the underlying concept so the user still learns something.
+- Never claim an event happened unless it appears in the CONFIRMED MATCH EVENTS or the VERIFIED LIVE FACTS above. If something cannot be confirmed, say so plainly, then explain the underlying concept so the user still learns something.
 - SCOPE: only answer questions about soccer, this match, the World Cup, the rules, or the matchday experience. If the input is off-topic (homework, coding, politics, weather, recipes, general chit-chat, etc.), do not answer it — briefly say it's outside Kickoff Buddy's scope and steer back to the match.
 - Write in simple, warm, beginner-friendly language. Always explain jargon when you use it.
 ${searchRule}
@@ -366,14 +449,34 @@ async function getAIResponse(taskType, userContext, matchData, userQuestion) {
   }
 
   const events = matchData.id ? await fetchMatchEvents(matchData.id) : null;
-  const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events);
-  // Search tasks (ask/decision/momentum) use OpenAI web search; the rest use
-  // IBM Granite via watsonx. Set the card label to match the provider used.
+
+  // Two-model split for live tasks (ask/decision/momentum):
+  //   Stage 1 — GPT-4o + web search gathers the verified "what happened" facts.
+  //   Stage 2 — IBM Granite explains them for a beginner (single voice shown).
+  // Non-live tasks (guide/teams/matchday) go straight to Granite.
   const useSearch = SEARCH_TASKS.has(taskType);
-  currentAILabel = useSearch ? OPENAI_MODEL_LABEL : GRANITE_LABEL;
-  const text = useSearch
-    ? await callOpenAIWithSearch(prompt)
-    : await callGranite(prompt);
+
+  let verifiedFacts = null;
+  if (useSearch) {
+    try {
+      const factPrompt = buildFactFindingPrompt(matchData, taskType, userQuestion, events);
+      verifiedFacts = await callOpenAIWithSearch(factPrompt);
+    } catch (e) {
+      // Graceful degradation: if the fact-checker is unavailable, Granite still
+      // answers using the official football-data.org events alone.
+      console.warn("GPT-4o fact-check unavailable; Granite will use API events only.", e);
+      verifiedFacts = null;
+    }
+  }
+
+  // Granite is always the explainer and the single voice — the AI badge always
+  // reads "IBM Granite". GPT-4o's contribution is credited in a small footer
+  // line, shown only when its verified facts actually fed the answer.
+  currentAILabel = GRANITE_LABEL;
+  currentAIProvenance = (useSearch && verifiedFacts) ? SEARCH_PROVENANCE : "";
+
+  const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events, verifiedFacts);
+  const text = await callGranite(prompt);
   return aiTextToCard(text, matchData, userContext, taskType);
 }
 
@@ -757,6 +860,7 @@ function ticketCard(matchData, userContext, subtitle, bodyHTML) {
       </div>
     </div>
     <div class="result-card__body">${bodyHTML}</div>
+    ${currentAIProvenance ? `<div class="result-card__provenance">${currentAIProvenance}</div>` : ""}
   </div>`;
 }
 

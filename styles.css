@@ -660,6 +660,22 @@ section[data-tab].tab-active { display: block; }
 }
 .result-card__body { padding: 20px 24px; }
 
+/* Provenance footer — credits GPT-4o's live fact-checking under the answer.
+   Only rendered on live features when web-verified facts fed the response. */
+.result-card__provenance {
+  padding: 9px 24px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+  background: rgba(126, 200, 255, 0.07);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: #5a6472;
+  letter-spacing: 0.01em;
+}
+.result-card__provenance strong {
+  font-weight: 700;
+  color: #2f3a4a;
+}
+
 /* ── Scoreboard in card header ─────────────────────────── */
 .result-card__scoreboard {
   display: flex;
