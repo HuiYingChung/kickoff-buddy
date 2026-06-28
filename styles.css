@@ -897,6 +897,18 @@ section[data-tab].tab-active { display: block; }
   color: var(--ink-muted);
   line-height: 1.55;
 }
+.checklist__detail p { margin: 0 0 6px; }
+.checklist__detail p:last-child { margin-bottom: 0; }
+.checklist__subhead {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 16px 0 2px;
+  padding-left: 2px;
+}
+.checklist__subhead:first-child { margin-top: 0; }
 
 /* ── Notice / Trust Boxes ───────────────────────────── */
 .notice-box {

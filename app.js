@@ -15,12 +15,13 @@
    • IBM Granite (watsonx.ai) — /api/ai — the EXPLAINER. Writes every final
        answer the user reads, for all six features. Single on-screen voice.
    • OpenAI GPT-4o (web search) — /api/ai-search — the FACT-CHECKER. For the
-       three live features only, it gathers verified "what happened" facts
+       match-explanation features it gathers verified current 2026 facts
        first; those are then handed to Granite to explain.
 
    Per-feature routing:
-   • guide / teams / matchday → Granite only (no live lookup needed).
-   • ask / decision / momentum → GPT-4o fact-check → Granite explains (hybrid).
+   • guide / ask / decision / momentum → GPT-4o fact-check → Granite explains
+       (hybrid — every match explanation reflects the live 2026 reality).
+   • teams / matchday → Granite only (don't hinge on live match state).
 
    Architecture:
    ┌────────────────────────────────────────────────────────────┐
@@ -69,14 +70,15 @@ const SEARCH_PROVENANCE  = 'Live facts verified via <strong>GPT-4o</strong> web 
 // NOTE: if you change OPENAI_MODEL, verify it supports the Responses API
 // `web_search_preview` tool used by /api/ai-search.
 
-// Two-model division of labour:
-//   • GPT-4o (web search) is the FACT-CHECKER — it gathers what actually
-//     happened in THIS match (live, changing facts).
-//   • IBM Granite (watsonx) is the EXPLAINER — it turns those verified facts
-//     plus the soccer rules into the warm, beginner-friendly answer the user
-//     reads. Granite is always the single voice on screen.
-// For these tasks Granite is fed web-verified facts from GPT-4o first.
-const SEARCH_TASKS = new Set(["ask", "decision", "momentum"]); // hybrid live tasks
+// Two-model division of labour (this app is for the LIVE 2026 World Cup):
+//   • GPT-4o (web search) is the FACT-CHECKER — it gathers the current 2026
+//     match reality (form, what just happened, live state, changing facts).
+//   • IBM Granite (watsonx) is the EXPLAINER — it explains the soccer rules,
+//     principles, and established facts, and uses GPT-4o's verified facts to
+//     ground the answer in THIS 2026 match. Granite is the single voice shown.
+// Every match-explanation feature is hybrid: GPT-4o verifies, Granite explains.
+// (teams/matchday stay Granite-only — they don't hinge on live match state.)
+const SEARCH_TASKS = new Set(["guide", "ask", "decision", "momentum"]);
 
 // Updated per request in getAIResponse so each result card shows the right
 // provider. Safe because a card renders synchronously to completion.
@@ -104,6 +106,7 @@ function matchToData(m) {
     ? new Date(m.utcDate).toLocaleDateString("en-GB", {
         day: "numeric",
         month: "short",
+        year: "numeric",
       })
     : "";
   const stageMap = {
@@ -226,6 +229,7 @@ function buildFactFindingPrompt(matchData, taskType, userQuestion, events = null
       : "Upcoming";
 
   const focusMap = {
+    guide:    `a pre-match briefing: the two teams' recent form and results, key players, any notable injuries or suspensions, what is at stake for each, and — if the match has already kicked off or finished — the actual current/final state`,
     ask:      `the user's question: "${userQuestion}"`,
     decision: `this referee or VAR decision / incident: "${userQuestion}"`,
     momentum: `the current momentum or tactical situation: "${userQuestion}"`,
@@ -293,6 +297,20 @@ function buildPrompt(userContext, matchData, taskType, userQuestion, events = nu
       ? "Final result"
       : "Upcoming";
 
+  // Today's real date, so the AI never invents a year and can reason about
+  // whether the match is upcoming, live, or already played.
+  const todayStr = new Date().toLocaleDateString("en-GB", {
+    day: "numeric", month: "long", year: "numeric",
+  });
+
+  // Reconcile the viewer's chosen moment with the match's real status, so the
+  // AI doesn't treat an already-played match as if it were still upcoming.
+  const realMoment = matchData.isLive ? "during" : matchData.isFinished ? "after" : "before";
+  const momentMismatch =
+    userContext.moment && userContext.moment !== realMoment
+      ? `IMPORTANT — STATUS MISMATCH: The viewer selected "${momentMap[userContext.moment] || userContext.moment}", but this match is actually "${statusInfo}". Acknowledge the real status in one short, friendly line — never pretend the match is still upcoming if it has already kicked off or finished. If it is already decided and they wanted a pre-match feel, say it has already been played and avoid leading with the final score unless they ask.`
+      : "";
+
   const taskInstructions = {
     guide: `
 TASK: Generate a personalised beginner match guide for this specific match.
@@ -302,7 +320,7 @@ FOCUS ON:
 3. Give exactly 3 specific things to watch for in THIS match — not generic soccer tips.
 4. Briefly explain the 1–2 rules most relevant to this match's context.
 5. Close with a short, warm note that makes the user feel ready and excited.
-DO NOT: Predict the result. Do not give a generic soccer lesson — everything must connect to this match.
+DO NOT: Predict the result of an unplayed match. Do not invent a date, year, or score — use only the MATCH details above. Do not give a generic soccer lesson — everything must connect to this match. If the match is already live or finished, open by acknowledging that honestly instead of pretending it is upcoming.
 RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
 ## Match Overview
 ## The Two Teams
@@ -420,15 +438,18 @@ USER PROFILE:
 - Viewing context: ${contextMap[userContext.viewContext] || userContext.viewContext}
 - Main goal: ${userContext.goal}
 
+TODAY'S DATE: ${todayStr}. This is the live FIFA World Cup 2026. Treat all dates and the year accordingly — never state a different year.
+
 MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
 - Status: ${statusInfo}
 - Score: ${scoreInfo}
 
 ${buildMatchEventsContext(events)}
-${verifiedBlock}${specificInstructions}
+${verifiedBlock}${momentMismatch ? momentMismatch + "\n\n" : ""}${specificInstructions}
 
 GENERAL RULES (apply to every response):
 - Answer exactly what was asked — nothing more, nothing less — and stay factual.
+- DIVISION OF LABOUR: Your job is to explain the soccer rules, principles, and established facts, and to make this 2026 match understandable for a beginner. Every live/changing fact about this match — the date, year, score, events, team form, current state — must come ONLY from the MATCH details, CONFIRMED MATCH EVENTS, and VERIFIED LIVE FACTS above. Never invent any of them; never guess a year or a result.
 - Never claim an event happened unless it appears in the CONFIRMED MATCH EVENTS or the VERIFIED LIVE FACTS above. If something cannot be confirmed, say so plainly, then explain the underlying concept so the user still learns something.
 - SCOPE: only answer questions about soccer, this match, the World Cup, the rules, or the matchday experience. If the input is off-topic (homework, coding, politics, weather, recipes, general chit-chat, etc.), do not answer it — briefly say it's outside Kickoff Buddy's scope and steer back to the match.
 - Write in simple, warm, beginner-friendly language. Always explain jargon when you use it.
@@ -529,6 +550,43 @@ function parseWatchList(text) {
   return items;
 }
 
+/* Robustly parse a matchday checklist from whatever markdown the model returns.
+   Handles "## heading", "### subheading", "1. **Title:** detail" and "- **Title:** detail".
+   Returns { blocks: [{kind:'item'|'subhead', heading, detail}], note }. */
+function parseMatchdayBlocks(raw) {
+  const blocks = [];
+  const noteBuf = [];
+  let current = null;
+  let inNote = false;
+
+  const flush = () => { if (current) { blocks.push(current); current = null; } };
+  const splitHeading = (body) => {
+    const bold = body.match(/^\*\*(.+?)\*\*\s*[:：]?\s*(.*)$/);
+    if (bold) return { heading: bold[1].replace(/[:：]\s*$/, "").trim(), detail: bold[2].trim() };
+    const colon = body.match(/^([^:：]{2,48})[:：]\s+(.*)$/);
+    if (colon) return { heading: colon[1].trim(), detail: colon[2].trim() };
+    return { heading: body.trim(), detail: "" };
+  };
+
+  for (const rawLine of raw.split("\n")) {
+    const trimmed = rawLine.trim();
+    const heading = trimmed.match(/^#{2,6}\s+(.*)$/);
+
+    if (heading && /official|source|reminder/i.test(heading[1])) { flush(); inNote = true; continue; }
+    if (inNote) { if (trimmed) noteBuf.push(trimmed.replace(/^#{2,6}\s+/, "")); continue; }
+    if (!trimmed) continue;
+
+    if (heading) { flush(); blocks.push({ kind: "subhead", heading: heading[1].trim(), detail: "" }); continue; }
+
+    const item = trimmed.match(/^(?:\d+[.)]|[-*•])\s+(.*)$/);
+    if (item) { flush(); current = { kind: "item", ...splitHeading(item[1]) }; continue; }
+
+    if (current) current.detail = (current.detail ? current.detail + " " : "") + trimmed;
+  }
+  flush();
+  return { blocks, note: noteBuf.join(" ").trim() || null };
+}
+
 /* Dispatcher — routes to the correct task renderer */
 function aiTextToCard(text, matchData, userContext, taskType) {
   const sections = parseSections(text);
@@ -624,13 +682,34 @@ function renderMatchday(sections, raw, matchData, userContext) {
     if (/pitch|kickoff|guide|read/i.test(title)) return "pitch";
     return "source";
   };
-  const checklistHTML = checkSections.length
-    ? `<div class="checklist">${checkSections.map((s, i) =>
-        checklistItem(iconFor(s.title), escapeHTML(s.title), mdToHtml(s.content), `ai-cl-${i}`)
-      ).join("")}</div>`
-    : `<div class="result-section__text">${mdToHtml(raw)}</div>`;
-  const noteHtml = noteSection
-    ? noticeBox(escapeHTML(noteSection.content), "")
+  let noteText = noteSection ? noteSection.content : null;
+  let checklistHTML;
+  if (checkSections.length >= 2) {
+    // Model followed the "one ## heading per item" format.
+    checklistHTML = `<div class="checklist">${checkSections.map((s, i) =>
+      checklistItem(iconFor(s.title), escapeHTML(s.title), mdToHtml(s.content), `ai-cl-${i}`)
+    ).join("")}</div>`;
+  } else {
+    // Fallback: model returned a numbered/bulleted list — parse it into items.
+    const { blocks, note } = parseMatchdayBlocks(raw);
+    if (note) noteText = note;
+    const itemCount = blocks.filter((b) => b.kind === "item").length;
+    if (itemCount >= 2) {
+      let n = 0;
+      checklistHTML = `<div class="checklist">${blocks.map((b) => {
+        if (b.kind === "subhead") {
+          return /^(matchday|your )?checklist/i.test(b.heading)
+            ? ""
+            : `<div class="checklist__subhead">${escapeHTML(b.heading)}</div>`;
+        }
+        return checklistItem(iconFor(b.heading), escapeHTML(b.heading), mdToHtml(b.detail), `ai-cl-${n++}`);
+      }).join("")}</div>`;
+    } else {
+      checklistHTML = `<div class="result-section__text">${mdToHtml(raw)}</div>`;
+    }
+  }
+  const noteHtml = noteText
+    ? noticeBox(mdToHtml(noteText), "")
     : noticeBox("For bag policies, venue rules, transit schedules, and ticket validity, always check the official FIFA website, your specific venue, and local transit authorities.", "");
   const venueCtx = userContext.viewContext;
   const venue = venueCtx === "stadium" ? "Stadium" : venueCtx === "bar" ? "Bar / Watch Party" : "Home Viewing";
