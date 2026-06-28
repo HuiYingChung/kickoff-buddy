@@ -141,19 +141,21 @@ Open [http://localhost:3001](http://localhost:3001) in your browser.
 kickoff-buddy/
 ├── index.html          # Full single-page app
 ├── styles.css          # All styling
-├── app.js              # Client-side logic, AI response handling, UI
+├── app.js              # Client-side logic, AI orchestration (GPT-4o → Granite), UI
 ├── proxy.js            # Local dev server — proxies external API calls
 ├── api/                # Vercel serverless functions (production)
-│   ├── ai.js           #   /api/ai         — IBM Granite (watsonx.ai) chat
-│   ├── ai-search.js    #   /api/ai-search  — OpenAI Responses + web search
+│   ├── ai.js           #   /api/ai         — IBM Granite (watsonx.ai) chat — explainer
+│   ├── ai-search.js    #   /api/ai-search  — OpenAI Responses + web search — fact-checker
 │   ├── matches.js      #   /api/matches    — World Cup fixtures
 │   └── match/[id].js   #   /api/match/:id  — per-match events
 ├── lib/                # Shared helpers (used by proxy.js and api/)
 │   ├── watsonx.js      #   IBM watsonx.ai Granite client (IAM token + chat)
 │   └── ratelimit.js    #   Per-IP rate limiting for the AI endpoints
+├── test-watsonx.js     # Dev script — checks watsonx.ai (Granite) connectivity
 ├── vercel.json         # Vercel function config (timeout)
 ├── favicon.svg
 ├── package.json
+├── package-lock.json
 ├── .env.example        # Template for required environment variables
 └── .gitignore          # Excludes .env and node_modules
 ```

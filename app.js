@@ -626,7 +626,7 @@ function renderMatchday(sections, raw, matchData, userContext) {
   };
   const checklistHTML = checkSections.length
     ? `<div class="checklist">${checkSections.map((s, i) =>
-        checklistItem(iconFor(s.title), escapeHTML(s.title), escapeHTML(s.content), `ai-cl-${i}`)
+        checklistItem(iconFor(s.title), escapeHTML(s.title), mdToHtml(s.content), `ai-cl-${i}`)
       ).join("")}</div>`
     : `<div class="result-section__text">${mdToHtml(raw)}</div>`;
   const noteHtml = noteSection
@@ -1915,6 +1915,154 @@ function mockMatchday(userContext, matchData) {
         heading: "Check the official stadium guide",
         detail:
           "Every World Cup venue publishes a Fan Guide. It covers bag policy, prohibited items, and entry procedures. Find it on the official venue website.",
+      },
+      {
+        icon: "transit",
+        heading: "Plan your transport early",
+        detail:
+          "Match days are very busy. Check the local transit authority for match-day schedules. Consider arriving 30–45 minutes earlier than usual.",
+      },
+      {
+        icon: "stadium",
+        heading: "Arrive early — gates open 2–3 hours before kick-off",
+        detail:
+          "Long queues at security are normal. Build in extra time to find your seat, buy refreshments, and absorb the atmosphere without rushing.",
+      },
+      {
+        icon: "bag",
+        heading: "Check the bag policy",
+        detail:
+          "Most stadiums ban large bags. Confirm the specific size and type restrictions for your venue before you pack. Transparent bags are often required.",
+      },
+      {
+        icon: "scarf",
+        heading: "Dress for the occasion",
+        detail:
+          "Wear your team's colours if you have them — or neutral colours if you're not sure who to support. Comfortable shoes matter for stadium walks.",
+      },
+      {
+        icon: "crowd",
+        heading: "Prepare for crowd noise",
+        detail:
+          "A World Cup stadium is very loud. If you are noise-sensitive, ear protection is not embarrassing — it's sensible. Enjoy the sound but look after yourself.",
+      },
+      {
+        icon: "source",
+        heading: "Save official contacts",
+        detail:
+          "Save the venue's official helpline and the nearest medical point location. Know where your gate is before you go in.",
+      },
+    ];
+  } else if (isBar) {
+    items = [
+      {
+        icon: "ticket",
+        heading: "Check if your venue needs a reservation",
+        detail:
+          "Popular bars and watch parties for big matches often require advance booking. Check the venue's website or call ahead.",
+      },
+      {
+        icon: "transit",
+        heading: "Plan transport home in advance",
+        detail:
+          "Busy match nights mean busy transport. Book a taxi or rideshare in advance, or know your last train/bus time before the match ends.",
+      },
+      {
+        icon: "crowd",
+        heading: "Arrive early for a good viewing spot",
+        detail:
+          "The best screens fill up fast. Arriving 30 minutes before kick-off gives you time to settle in and understand the setup.",
+      },
+      {
+        icon: "scarf",
+        heading: "Fan etiquette at a bar",
+        detail:
+          "Be respectful of people supporting different teams. World Cup bars bring together all kinds of fans. Celebrate your team, but keep it good-natured.",
+      },
+      {
+        icon: "source",
+        heading: "No spoilers for others",
+        detail:
+          "If you leave before the final whistle, remember others nearby may be watching the same match delayed. Be mindful.",
+      },
+      {
+        icon: "crowd",
+        heading: "Know it's okay to ask questions",
+        detail:
+          'Watch parties are social events. Asking "what just happened?" to someone next to you is completely normal. That\'s what Kickoff Buddy is for too.',
+      },
+    ];
+  } else {
+    // Home viewing
+    items = [
+      {
+        icon: "source",
+        heading: "Find an official broadcast channel",
+        detail:
+          "Check who holds the broadcast rights in your country for the World Cup. Illegal streams often fail at critical moments.",
+      },
+      {
+        icon: "transit",
+        heading: "Set your alarm for time zones",
+        detail:
+          "World Cup matches happen across multiple time zones. Check the kick-off time in your local time before the day.",
+      },
+      {
+        icon: "crowd",
+        heading: "Invite friends or family",
+        detail:
+          "Soccer is most enjoyable shared. Even if no one else knows the rules, the reactions are contagious.",
+      },
+      {
+        icon: "scarf",
+        heading: "Have Kickoff Buddy open",
+        detail:
+          'Keep this page open on a second screen or phone. Tap "Ask What Just Happened?" whenever you\'re confused — no embarrassment.',
+      },
+      {
+        icon: "pitch",
+        heading: "Read the Match Guide beforehand",
+        detail:
+          'Use the "Generate My Match Guide" section above before the match starts. It will give you the story and what to look for.',
+      },
+      {
+        icon: "source",
+        heading: "Follow official social channels",
+        detail:
+          "FIFA's official accounts post instant replays, stats, and explanations during matches.",
+      },
+    ];
+  }
+
+  const checklistHTML = `<div class="checklist">
+    ${items.map((item, i) => checklistItem(item.icon, item.heading, item.detail, `cl-${i}`)).join("")}
+  </div>`;
+
+  const venueLabel = isStadium
+    ? "Stadium"
+    : isBar
+      ? "Bar / Watch Party"
+      : "Home viewing";
+
+  const body = `
+    ${rs(
+      "Your checklist",
+      `Prepared for: ${venueLabel}`,
+      `<p style="margin-bottom:14px">Tap each item to check it off as you prepare.</p>
+       ${checklistHTML}`,
+    )}
+    ${noticeBox(
+      `<strong>Official sources reminder:</strong> Kickoff Buddy provides general guidance. For bag policies, venue rules, transit schedules, ticket validity, and safety information, always check the official FIFA website, your specific venue, and local transit authorities. These details change and vary by city and stadium.`,
+      "",
+    )}
+  `;
+  return ticketCard(
+    matchData,
+    userContext,
+    `Matchday Confidence Guide — ${venueLabel}`,
+    body,
+  );
+}e official venue website.",
       },
       {
         icon: "transit",
