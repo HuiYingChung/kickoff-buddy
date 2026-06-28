@@ -67,6 +67,8 @@ const OPENAI_MODEL_LABEL = "GPT-4o";        // label on search-based cards
 const GRANITE_LABEL      = "IBM Granite";   // AI badge — Granite is the single voice
 // Shown as a small footer note when GPT-4o web search actually fed the answer.
 const SEARCH_PROVENANCE  = 'Live facts verified via <strong>GPT-4o</strong> web search — explained by <strong>IBM Granite</strong>';
+// Shown on the matchday checklist when GPT-4o web search supplied the official links.
+const MATCHDAY_LINKS_PROVENANCE = 'Official links found via <strong>GPT-4o</strong> web search — checklist written by <strong>IBM Granite</strong>';
 // NOTE: if you change OPENAI_MODEL, verify it supports the Responses API
 // `web_search_preview` tool used by /api/ai-search.
 
@@ -266,6 +268,48 @@ UNCONFIRMED:
 }
 
 /* ─────────────────────────────────────────────────────────────
+   STAGE 1 (matchday) — OFFICIAL LINK FINDER (GPT-4o + web search)
+   Gathers a short list of verified, OFFICIAL, SAFE links relevant to the
+   user's viewing context. Strictly excludes scalpers, gambling, phishing,
+   and illegal-stream sites. Granite (Stage 2) embeds these into the checklist.
+───────────────────────────────────────────────────────────── */
+function buildLinkFindingPrompt(matchData, userContext) {
+  const ctx = userContext.viewContext;
+  const venueLabel = ctx === "stadium" ? "attending in person at the stadium"
+    : ctx === "bar" ? "watching at a bar / public watch party"
+    : "watching at home";
+  return `
+You are a research assistant finding OFFICIAL, SAFE web links for a fan preparing
+for one specific FIFA World Cup 2026 match. You are NOT writing advice — only
+gathering verified links.
+
+MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
+FAN'S CONTEXT: ${venueLabel}.
+
+STEP 1 — Use web search to identify the host stadium and host city for this match.
+STEP 2 — Find the most relevant OFFICIAL links for this fan's context:
+- FIFA: the official fifa.com match/venue page or stadium fan guide (bag policy, gates, rules).
+- Transit (if at stadium): the host city's OFFICIAL public-transit authority site and match-day travel info.
+- Tickets (if at stadium): ONLY the official FIFA ticketing portal or FIFA-authorised resale.
+- Broadcast (if at bar/home): the OFFICIAL rights-holding broadcaster, or FIFA's official "where to watch" page if the region is unknown.
+
+STRICT SOURCE RULES — this is critical:
+- ONLY official, primary, reputable sources: FIFA.com, the official stadium/venue site, official city-government transit authorities, official rights-holding broadcasters.
+- NEVER include ticket scalpers/touts or non-FIFA secondary resellers, gambling/betting/odds sites, unofficial or pirated streams, phishing, or unofficial fan/blog sites.
+- Only output a URL you actually found and verified via web search. Do NOT guess or construct URLs. If a category cannot be found, OMIT it — never fabricate.
+- Prefer the canonical https homepage of the official resource if a deep link is uncertain.
+
+OUTPUT FORMAT (only categories you actually verified, one per line; use real https URLs):
+OFFICIAL LINKS:
+- FIFA match/venue: <label> — <https url>
+- Stadium fan guide: <label> — <https url>
+- Host-city transit: <label> — <https url>
+- Official tickets: <label> — <https url>
+- Official broadcast: <label> — <https url>
+If nothing could be verified, output exactly: OFFICIAL LINKS: none found`.trim();
+}
+
+/* ─────────────────────────────────────────────────────────────
    STAGE 2 — EXPLAINER PROMPT (IBM Granite / watsonx)
    Constructs the structured prompt that Granite turns into the final answer.
    For live tasks it receives `verifiedFacts` from Stage 1 as ground truth.
@@ -410,7 +454,8 @@ FOCUS ON:
 3. Relevant fan etiquette and social tips for their context.
 4. Remind the user to verify venue rules, bag policies, transit, and ticketing with official FIFA and venue sources.
 DO NOT: Explain general soccer rules. Do not repeat basic information the user would already know. Stay focused on preparation, logistics, and confidence-building.
-RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–6 words max). One paragraph of detail per item. Final section: ## Official Sources Reminder`,
+RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–6 words max). One paragraph of detail per item. Final section: ## Official Sources Reminder
+LINKS: The verified facts above may contain an "OFFICIAL LINKS" list gathered by web search. When a checklist item relates to one of those links (tickets, transit, venue/FIFA rules, broadcast), embed that link inline in the item's detail as a markdown link, e.g. [FIFA match page](https://www.fifa.com/...). In the ## Official Sources Reminder section, list the key official links as markdown links. Use ONLY URLs that appear verbatim in that list — never invent, alter, or shorten a URL, and never link a ticket reseller/scalper, gambling, or unofficial-stream site. If the list says "none found" or is absent, include NO links and simply remind the user to check the official FIFA site, their venue, and local transit authorities.`,
   };
 
   const specificInstructions = taskInstructions[taskType] || `
@@ -474,27 +519,33 @@ async function getAIResponse(taskType, userContext, matchData, userQuestion) {
   // Two-model split for live tasks (ask/decision/momentum):
   //   Stage 1 — GPT-4o + web search gathers the verified "what happened" facts.
   //   Stage 2 — IBM Granite explains them for a beginner (single voice shown).
-  // Non-live tasks (guide/teams/matchday) go straight to Granite.
-  const useSearch = SEARCH_TASKS.has(taskType);
+  // Matchday also uses GPT-4o web search — but to gather official, safe LINKS
+  // (FIFA/venue, transit, tickets, broadcast) rather than match facts.
+  const isMatchday = taskType === "matchday";
+  const useSearch = SEARCH_TASKS.has(taskType) || isMatchday;
 
   let verifiedFacts = null;
   if (useSearch) {
     try {
-      const factPrompt = buildFactFindingPrompt(matchData, taskType, userQuestion, events);
+      const factPrompt = isMatchday
+        ? buildLinkFindingPrompt(matchData, userContext)
+        : buildFactFindingPrompt(matchData, taskType, userQuestion, events);
       verifiedFacts = await callOpenAIWithSearch(factPrompt);
     } catch (e) {
-      // Graceful degradation: if the fact-checker is unavailable, Granite still
-      // answers using the official football-data.org events alone.
-      console.warn("GPT-4o fact-check unavailable; Granite will use API events only.", e);
+      // Graceful degradation: if GPT-4o web search is unavailable, Granite still
+      // answers using the official football-data.org events alone (no links).
+      console.warn("GPT-4o web search unavailable; Granite will proceed without it.", e);
       verifiedFacts = null;
     }
   }
 
   // Granite is always the explainer and the single voice — the AI badge always
   // reads "IBM Granite". GPT-4o's contribution is credited in a small footer
-  // line, shown only when its verified facts actually fed the answer.
+  // line, shown only when its verified facts/links actually fed the answer.
   currentAILabel = GRANITE_LABEL;
-  currentAIProvenance = (useSearch && verifiedFacts) ? SEARCH_PROVENANCE : "";
+  currentAIProvenance = !verifiedFacts
+    ? ""
+    : isMatchday ? MATCHDAY_LINKS_PROVENANCE : SEARCH_PROVENANCE;
 
   const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events, verifiedFacts);
   const text = await callGranite(prompt);
@@ -524,13 +575,31 @@ function parseSections(text) {
 
 /* Safe markdown → HTML (bold, italic, paragraphs) */
 function mdToHtml(text) {
-  return escapeHTML(text)
+  return linkify(escapeHTML(text))
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/\n\n+/g, "</p><p>")
     .replace(/\n/g, "<br>")
     .replace(/^/, "<p>")
     .replace(/$/, "</p>");
+}
+
+/* Convert markdown links [label](url) and bare URLs into safe anchors.
+   Only http(s) URLs are allowed (blocks javascript: etc.); links open in a new
+   tab with no referrer. Operates on already-escaped text. */
+function linkify(escaped) {
+  const safe = (url) => /^https?:\/\//i.test(url);
+  const anchor = (label, url) =>
+    `<a href="${url}" target="_blank" rel="noopener noreferrer nofollow">${label}</a>`;
+  // [label](url)
+  let out = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) =>
+    safe(url) ? anchor(label, url) : label);
+  // bare URLs (not already inside an href attribute)
+  out = out.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (m, pre, url) => {
+    const clean = url.replace(/[.,]+$/, "");
+    return safe(clean) ? pre + anchor(clean, clean) : m;
+  });
+  return out;
 }
 
 /* Parse "1. **Heading**: Description" list → [{ heading, desc }] */
@@ -603,22 +672,20 @@ function aiTextToCard(text, matchData, userContext, taskType) {
 
 /* ── Guide: overview + teams + styles + watch list + rules + encouragement ── */
 function renderGuide(sections, raw, matchData, userContext) {
-  const eyebrows = ["Simple Summary", "The Teams", "Playing Styles", "3 Things to Watch", "Rules You May Need", "You're Ready"];
-  const body = sections.map((s, i) => {
+  const body = sections.map((s) => {
     if (/3 things/i.test(s.title)) {
       const items = parseWatchList(s.content);
-      return rs(eyebrows[i] || "", s.title, items.length ? watchList(items) : mdToHtml(s.content));
+      return rs("", s.title, items.length ? watchList(items) : mdToHtml(s.content));
     }
-    return rs(eyebrows[i] || "", s.title, mdToHtml(s.content));
+    return rs("", s.title, mdToHtml(s.content));
   }).join("") || `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
   return ticketCard(matchData, userContext, "Match Guide", body);
 }
 
 /* ── Ask: direct answer → cause → significance → what to watch ── */
 function renderAsk(sections, raw, matchData, userContext) {
-  const eyebrows = ["Simple Explanation", "Context", "Why It Matters", "Keep an Eye On…"];
   const body =
-    (sections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+    (sections.map((s) => rs("", s.title, mdToHtml(s.content))).join("") ||
       `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`) +
     noticeBox("For official rulings on specific decisions, always refer to the match broadcast or official FIFA communications.", "info");
   return ticketCard(matchData, userContext, "Live Explainer", body);
@@ -626,11 +693,10 @@ function renderAsk(sections, raw, matchData, userContext) {
 
 /* ── Decision: meaning + process + controversy + replay tip + trust notice ── */
 function renderDecision(sections, raw, matchData, userContext) {
-  const eyebrows = ["What This Means", "The Process", "The Controversy", "Replay Tip"];
   const mainSections = sections.filter((_, i) => i < 4);
   const trustSection = sections.find((s) => /trust/i.test(s.title));
   const main =
-    mainSections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+    mainSections.map((s) => rs("", s.title, mdToHtml(s.content))).join("") ||
     `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
   const trust = trustSection
     ? `<div class="notice-box notice-box--info">
@@ -643,9 +709,8 @@ function renderDecision(sections, raw, matchData, userContext) {
 
 /* ── Momentum: what's happening + why + tactics + human side + watch next ── */
 function renderMomentum(sections, raw, matchData, userContext) {
-  const eyebrows = ["Reading the Moment", "The Explanation", "Coach’s Perspective", "The Human Side", "Stay Focused On…"];
   const body =
-    (sections.map((s, i) => rs(eyebrows[i] || "", s.title, mdToHtml(s.content))).join("") ||
+    (sections.map((s) => rs("", s.title, mdToHtml(s.content))).join("") ||
       `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`) +
     noticeBox("This is contextual explanation. Actual tactical decisions depend on the specific teams and coaches involved.", "");
   return ticketCard(matchData, userContext, "Momentum & Tactics Explainer", body);
@@ -947,9 +1012,14 @@ function ticketCard(matchData, userContext, subtitle, bodyHTML) {
    eyebrow + title are always plain text (often AI-generated), so they are
    HTML-escaped here. content is pre-rendered HTML and passed through. */
 function rs(eyebrow, title, content) {
+  // Skip the small eyebrow label when it's empty or just repeats the title —
+  // each section then shows a single clean heading instead of two stacked ones.
+  const showEyebrow =
+    eyebrow && eyebrow.trim() &&
+    eyebrow.trim().toLowerCase() !== String(title).trim().toLowerCase();
   return `
   <div class="result-section">
-    <div class="result-section__eyebrow">${escapeHTML(eyebrow)}</div>
+    ${showEyebrow ? `<div class="result-section__eyebrow">${escapeHTML(eyebrow)}</div>` : ""}
     <div class="result-section__title">${escapeHTML(title)}</div>
     <div class="result-section__text">${content}</div>
   </div>`;
