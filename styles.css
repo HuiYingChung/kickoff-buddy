@@ -839,6 +839,59 @@ section[data-tab].tab-active { display: block; }
   line-height: 1.62;
 }
 
+/* ── Team card fixtures (recent results + next match) ── */
+.team-card__fixtures {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.fixtures__label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 8px 0 4px;
+}
+.fixtures__label:first-child { margin-top: 0; }
+.fixtures__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+.fixtures__row .fx-opp { flex: 1 1 auto; min-width: 0; }
+.fixtures__row .fx-score { font-weight: 700; font-variant-numeric: tabular-nums; }
+.fixtures__row .fx-meta {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+.fixtures__row--next .fx-opp { font-weight: 600; }
+.fx-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+.fx-badge--w { background: var(--green-ok-bg); color: var(--green-ok); border-color: var(--green-ok); }
+.fx-badge--l { background: var(--ref-red-bg); color: var(--ref-red); border-color: var(--ref-red); }
+.fx-badge--d { background: var(--bg-alt); color: var(--ink-muted); border-color: var(--border-strong); }
+.fx-badge--live {
+  width: auto;
+  padding: 0 6px;
+  background: var(--ref-red);
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
 /* ── Checklist (interactive) ────────────────────────── */
 .checklist { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .checklist__item {
@@ -1218,6 +1271,16 @@ section[data-tab].tab-active { display: block; }
 .footer__brand { display: flex; align-items: center; gap: 7px; }
 .footer__powered { display: flex; align-items: center; gap: 7px; color: rgba(255,255,255,0.55); }
 .footer__powered strong { color: rgba(255,255,255,0.9); }
+.footer__copyright {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.4);
+  text-align: center;
+}
+.footer__copyright a { color: rgba(255,255,255,0.7); text-decoration: none; }
+.footer__copyright a:hover { color: #fff; text-decoration: underline; }
 
 /* ── About / How-to Section ─────────────────────────── */
 .about-header {
@@ -1518,9 +1581,9 @@ section[data-tab].tab-active { display: block; }
   .bottom-nav__btn:active  { color: rgba(255,255,255,0.85); }
   .bottom-nav__btn.active  { color: #fff; border-top-color: var(--ibm-blue); }
 
-  /* Push content up so bottom bar doesn't cover it */
-  main   { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
-  footer { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+  /* Push content up so bottom bar doesn't cover it (+24px clearance) */
+  main         { padding-bottom: calc(56px + 24px + env(safe-area-inset-bottom)); }
+  .footer      { padding-bottom: calc(56px + 24px + env(safe-area-inset-bottom)) !important; }
 }
 
 /* ── SVG Rule-Explanation Animations ─────────────────── */

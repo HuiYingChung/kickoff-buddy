@@ -175,6 +175,153 @@ async function populateMatchDropdown() {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   TEAM FIXTURES — recent results + next match per team
+   Used to enrich the "Choose My Team" recommendation cards.
+───────────────────────────────────────────────────────────── */
+
+// Raw WC fixtures, fetched once and reused across recommendation cards.
+let allMatchesCache = null;
+async function ensureAllMatches() {
+  if (allMatchesCache) return allMatchesCache;
+  try {
+    allMatchesCache = await fetchLiveMatches();
+  } catch (e) {
+    console.warn("Could not load fixtures for team cards:", e);
+    allMatchesCache = [];
+  }
+  return allMatchesCache;
+}
+
+// Normalise a team name for fuzzy matching (lowercase, strip accents & spaces).
+function normTeam(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/g, "");
+}
+
+// A recommendation heading may be "Italy or Germany" or "The Host Nation".
+// Split it into candidate team names we can match against the fixtures.
+function teamNameVariants(title) {
+  return String(title || "")
+    .split(/\bor\b|\/|,|&/i)
+    .map((s) => s.replace(/^the\s+/i, "").trim())
+    .filter(Boolean);
+}
+
+const STAGE_SHORT = {
+  GROUP_STAGE: "Group",
+  ROUND_OF_16: "R16",
+  QUARTER_FINALS: "QF",
+  SEMI_FINALS: "SF",
+  THIRD_PLACE: "3rd Place",
+  FINAL: "Final",
+};
+
+function fmtFixtureDate(utc, withTime) {
+  if (!utc) return "";
+  const d = new Date(utc);
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  if (!withTime) return date;
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `${date} · ${time}`;
+}
+
+// Given a recommendation heading, return that team's recent results + next match.
+function getTeamFixtures(title, matches) {
+  const variants = teamNameVariants(title).map(normTeam).filter((v) => v.length >= 3);
+  if (!variants.length || !Array.isArray(matches) || !matches.length) return null;
+
+  const isTeam = (name) => {
+    const n = normTeam(name);
+    if (!n) return false;
+    return variants.some(
+      (v) =>
+        n === v ||
+        (v.length >= 4 && n.includes(v)) ||
+        (n.length >= 4 && v.includes(n)),
+    );
+  };
+
+  const involved = matches.filter(
+    (m) => isTeam(m.homeTeam && m.homeTeam.name) || isTeam(m.awayTeam && m.awayTeam.name),
+  );
+  if (!involved.length) return null;
+
+  const oriented = involved.map((m) => {
+    const isHome = isTeam(m.homeTeam && m.homeTeam.name);
+    const opp = (isHome ? m.awayTeam : m.homeTeam) || {};
+    const score = m.score && m.score.fullTime ? m.score.fullTime : {};
+    const sf = isHome ? score.home : score.away;
+    const sa = isHome ? score.away : score.home;
+    const finished = m.status === "FINISHED";
+    const live = ["LIVE", "IN_PLAY", "PAUSED"].includes(m.status);
+    let result = null;
+    if (finished && sf != null && sa != null) {
+      result = sf > sa ? "W" : sf < sa ? "L" : "D";
+    }
+    return {
+      opp: opp.name || "TBD",
+      sf,
+      sa,
+      finished,
+      live,
+      result,
+      utc: m.utcDate,
+      stage: STAGE_SHORT[m.stage] || "",
+    };
+  });
+
+  const byDate = (a, b) => new Date(a.utc || 0) - new Date(b.utc || 0);
+  const played = oriented.filter((o) => o.finished || o.live).sort(byDate);
+  const upcoming = oriented.filter((o) => !o.finished && !o.live).sort(byDate);
+
+  return { played: played.slice(-3), next: upcoming[0] || null };
+}
+
+// Build the small fixtures block shown inside a recommendation card.
+function teamFixturesHtml(title, matches) {
+  const fx = getTeamFixtures(title, matches);
+  if (!fx || (!fx.played.length && !fx.next)) return "";
+
+  let html = '<div class="team-card__fixtures">';
+
+  if (fx.played.length) {
+    html += '<div class="fixtures__label">Recent matches</div>';
+    html += fx.played
+      .map((o) => {
+        const score = o.sf != null && o.sa != null ? `${o.sf}–${o.sa}` : "–";
+        const badge = o.live
+          ? '<span class="fx-badge fx-badge--live">LIVE</span>'
+          : o.result
+            ? `<span class="fx-badge fx-badge--${o.result.toLowerCase()}">${o.result}</span>`
+            : "";
+        const meta = `${fmtFixtureDate(o.utc)}${o.stage ? " · " + o.stage : ""}`;
+        return `<div class="fixtures__row">
+          <span class="fx-opp">vs ${escapeHTML(o.opp)}</span>
+          <span class="fx-score">${score}</span>
+          ${badge}
+          <span class="fx-meta">${meta}</span>
+        </div>`;
+      })
+      .join("");
+  }
+
+  if (fx.next) {
+    const meta = `${fmtFixtureDate(fx.next.utc, true)}${fx.next.stage ? " · " + fx.next.stage : ""}`;
+    html += '<div class="fixtures__label">Next match</div>';
+    html += `<div class="fixtures__row fixtures__row--next">
+      <span class="fx-opp">vs ${escapeHTML(fx.next.opp)}</span>
+      <span class="fx-meta">${meta}</span>
+    </div>`;
+  }
+
+  html += "</div>";
+  return html;
+}
+
+/* ─────────────────────────────────────────────────────────────
    OPENAI INTEGRATION
 ───────────────────────────────────────────────────────────── */
 // Granite (IBM watsonx.ai) — the explainer. Writes the final answer for every
@@ -549,6 +696,9 @@ async function getAIResponse(taskType, userContext, matchData, userQuestion) {
 
   const prompt = buildPrompt(userContext, matchData, taskType, userQuestion, events, verifiedFacts);
   const text = await callGranite(prompt);
+  // Team recommendations show each team's recent results + next match, so make
+  // sure the WC fixtures are loaded before we render the cards synchronously.
+  if (taskType === "teams") await ensureAllMatches();
   return aiTextToCard(text, matchData, userContext, taskType);
 }
 
@@ -721,7 +871,14 @@ function renderTeams(sections, raw, matchData, userContext) {
   const isNote = (s) => /any team|valid|no wrong/i.test(s.title + " " + s.content);
   const teamSections = sections.filter((s) => !isNote(s));
   const noteSection  = sections.find((s) => isNote(s));
-  const cards = teamSections.map((s) => teamCard(escapeHTML(s.title), mdToHtml(s.content))).join("");
+  const cards = teamSections
+    .map((s) =>
+      teamCard(
+        escapeHTML(s.title),
+        mdToHtml(s.content) + teamFixturesHtml(s.title, allMatchesCache || []),
+      ),
+    )
+    .join("");
   const noteHtml = noteSection
     ? noticeBox(escapeHTML(noteSection.content), "info")
     : noticeBox("You can support any team for any reason. There are no wrong choices in fan culture.", "info");
@@ -2021,7 +2178,8 @@ function mockTeams(userContext, prefs) {
         t.name,
         `<p style="margin-bottom:8px">${t.why}</p>
      <p style="margin-bottom:8px"><strong>Why for a beginner:</strong> ${t.beginner}</p>
-     <p><strong>What to watch:</strong> ${t.watch}</p>`,
+     <p><strong>What to watch:</strong> ${t.watch}</p>` +
+          teamFixturesHtml(t.name, allMatchesCache || []),
       ),
     )
     .join("");
