@@ -181,6 +181,10 @@ async function populateMatchDropdown() {
 
 // Raw WC fixtures, fetched once and reused across recommendation cards.
 let allMatchesCache = null;
+// Team names from the most recent "Choose My Team" result. The Matchday guide
+// lets the fan pick one of these so its checklist can focus on that team's
+// next match. Empty until recommendTeams() has produced a result.
+let recommendedTeams = [];
 async function ensureAllMatches() {
   if (allMatchesCache) return allMatchesCache;
   try {
@@ -270,6 +274,7 @@ function getTeamFixtures(title, matches) {
       result,
       utc: m.utcDate,
       stage: STAGE_SHORT[m.stage] || "",
+      raw: m,
     };
   });
 
@@ -415,11 +420,81 @@ UNCONFIRMED:
 }
 
 /* ─────────────────────────────────────────────────────────────
+   STAGE 1 (Choose My Team) — TEAM FACT-FINDING PROMPT (GPT-4o + search)
+   Gathers CURRENT 2026-tournament facts about candidate teams that fit the
+   fan's stated preferences, so Granite recommends from live form rather than
+   only its training memory. Produces a factual brief, not recommendations.
+───────────────────────────────────────────────────────────── */
+function buildTeamFactFindingPrompt(prefs) {
+  return `
+You are a soccer FACT-CHECKER helping match a first-time fan to FIFA World Cup 2026
+teams. Your ONLY job is to gather verified, CURRENT facts about the 2026 tournament —
+you are NOT writing recommendations, rankings, or advice for the end user.
+
+THE FAN'S STATED PREFERENCES: "${prefs}"
+
+WHAT TO FIND — for the World Cup 2026 as it stands RIGHT NOW, surface candidate teams
+whose situation fits those preferences, each with concrete current facts:
+- current group standing / knockout progress and recent results (with scores),
+- standout players and the playing style each team has shown so far this tournament,
+- notable underdog or emotional storylines, host-nation status, and strong sides by
+  confederation (Asian / Americas / European) — whichever match the preferences.
+
+INSTRUCTIONS:
+- Use web search for the CURRENT 2026 state; today's date matters — report the latest
+  results, not past tournaments. Prefer FIFA.com, BBC Sport, ESPN, Reuters, or AP.
+- Report ONLY verified facts, each with its source in parentheses.
+- Cover a RANGE of candidate teams (aim for 5–8) so the recommender has options.
+- Do NOT recommend, rank, or write beginner prose. Output a short factual brief only.
+
+OUTPUT FORMAT (keep under ~200 words):
+VERIFIED FACTS:
+- <team>: <current standing / result / style> (source: <site>)
+UNCONFIRMED:
+- <anything you could not confirm>`.trim();
+}
+
+/* ─────────────────────────────────────────────────────────────
    STAGE 1 (matchday) — OFFICIAL LINK FINDER (GPT-4o + web search)
    Gathers a short list of verified, OFFICIAL, SAFE links relevant to the
    user's viewing context. Strictly excludes scalpers, gambling, phishing,
    and illegal-stream sites. Granite (Stage 2) embeds these into the checklist.
 ───────────────────────────────────────────────────────────── */
+// Only these domains may appear as official links in the Matchday guide. Any
+// other URL the fact-checker returns is dropped, so a wrong or guessed link is
+// never shown. Broadcast/transit links vary by region and are the main source
+// of bad URLs — we point users to verify those themselves instead. Extend this
+// list only with domains you trust as primary/official sources.
+const ALLOWED_LINK_DOMAINS = ["fifa.com"];
+
+function isAllowedLinkDomain(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return ALLOWED_LINK_DOMAINS.some((d) => host === d || host.endsWith("." + d));
+  } catch {
+    return false;
+  }
+}
+
+// Strip any non-allow-listed URLs from the fact-checker's OFFICIAL LINKS block
+// before it reaches Granite. Drops a whole line if it carries a disallowed URL,
+// and makes "none found" explicit when nothing official survives.
+function sanitizeOfficialLinks(facts) {
+  if (!facts) return facts;
+  const findUrls = (s) => s.match(/https?:\/\/[^\s)]+/g) || [];
+  const kept = facts.split("\n").filter((line) => {
+    const urls = findUrls(line);
+    return urls.length === 0 || urls.every(isAllowedLinkDomain);
+  });
+  let out = kept.join("\n").trim();
+  if (findUrls(out).length === 0) {
+    out = /OFFICIAL LINKS/i.test(out)
+      ? out.replace(/OFFICIAL LINKS:[\s\S]*$/i, "OFFICIAL LINKS: none found")
+      : out + "\nOFFICIAL LINKS: none found";
+  }
+  return out.trim();
+}
+
 function buildLinkFindingPrompt(matchData, userContext) {
   const ctx = userContext.viewContext;
   const venueLabel = ctx === "stadium" ? "attending in person at the stadium"
@@ -432,6 +507,7 @@ gathering verified links.
 
 MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
 FAN'S CONTEXT: ${venueLabel}.
+FAN SUPPORTS: ${userContext.supportedTeam || "no specific team"}.
 
 STEP 1 — Use web search to identify the host stadium and host city for this match.
 STEP 2 — Find the most relevant OFFICIAL links for this fan's context:
@@ -498,9 +574,50 @@ function buildPrompt(userContext, matchData, taskType, userQuestion, events = nu
   // AI doesn't treat an already-played match as if it were still upcoming.
   const realMoment = matchData.isLive ? "during" : matchData.isFinished ? "after" : "before";
   const momentMismatch =
-    userContext.moment && userContext.moment !== realMoment
+    matchData.id && userContext.moment && userContext.moment !== realMoment
       ? `IMPORTANT — STATUS MISMATCH: The viewer selected "${momentMap[userContext.moment] || userContext.moment}", but this match is actually "${statusInfo}". Acknowledge the real status in one short, friendly line — never pretend the match is still upcoming if it has already kicked off or finished. If it is already decided and they wanted a pre-match feel, say it has already been played and avoid leading with the final score unless they ask.`
       : "";
+
+  // A real match is only attached for match-centric tasks (and for a focused
+  // matchday). When absent, the match block is omitted entirely so a generic
+  // venue checklist never references an unrelated fixture.
+  const hasMatch = !!matchData.id;
+  const matchBlock = hasMatch
+    ? `MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
+- Status: ${statusInfo}
+- Score: ${scoreInfo}
+
+${buildMatchEventsContext(events)}
+`
+    : "";
+
+  // Venue-specific checklist topics so each venue produces a distinct, relevant
+  // list. Only the stadium gets tickets / bag policy / transit.
+  const venueTopics = {
+    home: [
+      "Find the official broadcast or stream",
+      "Check kickoff time in your time zone",
+      "Set up a comfortable viewing space",
+      "A 60-second rules cheat-sheet",
+      "Make it social — who to watch with",
+    ],
+    bar: [
+      "Find a bar showing the match",
+      "Arrive early for a good spot",
+      "Ordering and tab etiquette",
+      "Cheering and crowd etiquette",
+      "Plan how you'll get home",
+    ],
+    stadium: [
+      "Confirm tickets via official channels",
+      "Check the stadium bag policy",
+      "Plan transit and arrive early",
+      "Security and gate entry",
+      "What to wear (team colours)",
+      "Crowd noise and atmosphere",
+    ],
+  };
+  const mdTopics = venueTopics[userContext.viewContext] || venueTopics.home;
 
   const taskInstructions = {
     guide: `
@@ -580,11 +697,13 @@ RESPONSE FORMAT — output these ## section headings in this exact order, no ext
     teams: `
 TASK: Recommend 2–3 World Cup teams that suit this specific user's interests and personality.
 THE USER'S PREFERENCES: "${userQuestion}"
+FACT: World Cup 2026 is co-hosted by THREE nations — the United States, Canada, and Mexico. If the user's preferences include the host country / host nation, treat all three as the host options and lead with them (you may recommend the hosts themselves as the picks).
 FOCUS ON:
 1. Match the recommendations directly to what the user told you — explain WHY each team suits THEM personally.
 2. For each team, give a concrete "what to watch for" tip that a beginner can act on immediately.
 3. Keep recommendations personal and specific, not a history textbook.
-4. End with a brief note that any choice is valid — there are no wrong teams to support.
+4. If VERIFIED LIVE FACTS about the 2026 tournament are provided above, prefer teams they cover and ground any claim about current form, results, or who's playing well in those facts — do not rely on memory for the current tournament, and never invent a result or standing. General personality/style fit can still draw on your soccer knowledge.
+5. End with a brief note that any choice is valid — there are no wrong teams to support.
 DO NOT: List every team. Do not give long historical lectures. Do not recommend a team that clearly does not match the user's stated preferences.
 RESPONSE FORMAT — one ## heading per recommended team (the team name only), then exactly three lines:
 **Why this team:** [why it suits this specific user]
@@ -593,16 +712,15 @@ RESPONSE FORMAT — one ## heading per recommended team (the team name only), th
 Final section: ## Any Team is Valid`,
 
     matchday: `
-TASK: Build a practical, actionable matchday preparation guide for the user's specific viewing context.
-THE VENUE: "${userQuestion}"
-FOCUS ON:
-1. Concrete steps the user should take before the match starts.
-2. What to expect on matchday specifically for their venue — home, bar, or stadium.
-3. Relevant fan etiquette and social tips for their context.
-4. Remind the user to verify venue rules, bag policies, transit, and ticketing with official FIFA and venue sources.
-DO NOT: Explain general soccer rules. Do not repeat basic information the user would already know. Stay focused on preparation, logistics, and confidence-building.
-RESPONSE FORMAT — one ## heading per checklist item (short action phrase, 4–6 words max). One paragraph of detail per item. Final section: ## Official Sources Reminder
-LINKS: The verified facts above may contain an "OFFICIAL LINKS" list gathered by web search. When a checklist item relates to one of those links (tickets, transit, venue/FIFA rules, broadcast), embed that link inline in the item's detail as a markdown link, e.g. [FIFA match page](https://www.fifa.com/...). In the ## Official Sources Reminder section, list the key official links as markdown links. Use ONLY URLs that appear verbatim in that list — never invent, alter, or shorten a URL, and never link a ticket reseller/scalper, gambling, or unofficial-stream site. If the list says "none found" or is absent, include NO links and simply remind the user to check the official FIFA site, their venue, and local transit authorities.`,
+TASK: Build a concise, practical matchday checklist tailored to a ${contextMap[userContext.viewContext] || userContext.viewContext} experience.
+THE CONTEXT: "${userQuestion}"
+REQUIRED ITEMS — output ONE "## heading" per item below, in this order, and NO other items. They are specific to this venue:
+${mdTopics.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+FOR EACH ITEM: a short heading (4–6 words) then 1–2 sentences of concrete, actionable detail for THIS venue. Be specific and brief — do not pad.
+${userContext.supportedTeam ? `TEAM: The fan supports ${userContext.supportedTeam}. Where it fits naturally, tailor an item to them (their colours to wear, or their next match's city / stadium / kickoff if given above) — but use ONLY specifics provided above or in the verified facts; never invent a venue, city, date, or result.` : ""}
+DO NOT: add items not listed above; include tickets, bag policy, or transit for a home or bar viewer; explain general soccer rules; or repeat the same advice across items.
+RESPONSE FORMAT — one ## heading per required item above (in order), one short paragraph each. Final section: ## Official Sources Reminder
+LINKS: The verified facts above may contain an "OFFICIAL LINKS" list. When an item relates to one of those links, embed it inline as a markdown link, e.g. [FIFA match page](https://www.fifa.com/...). In ## Official Sources Reminder, list those official links as markdown links. Use ONLY URLs that appear verbatim in that list — never invent, alter, or shorten a URL. If the list says "none found" or is absent, include NO links and simply remind the user to check the official FIFA site (fifa.com), their venue, the official broadcaster, and local transit authorities themselves.`,
   };
 
   const specificInstructions = taskInstructions[taskType] || `
@@ -632,12 +750,7 @@ USER PROFILE:
 
 TODAY'S DATE: ${todayStr}. This is the live FIFA World Cup 2026. Treat all dates and the year accordingly — never state a different year.
 
-MATCH: ${matchData.label} (${matchData.stage}, ${matchData.date})
-- Status: ${statusInfo}
-- Score: ${scoreInfo}
-
-${buildMatchEventsContext(events)}
-${verifiedBlock}${momentMismatch ? momentMismatch + "\n\n" : ""}${specificInstructions}
+${matchBlock}${verifiedBlock}${momentMismatch ? momentMismatch + "\n\n" : ""}${specificInstructions}
 
 GENERAL RULES (apply to every response):
 - Answer exactly what was asked — nothing more, nothing less — and stay factual.
@@ -668,16 +781,30 @@ async function getAIResponse(taskType, userContext, matchData, userQuestion) {
   //   Stage 2 — IBM Granite explains them for a beginner (single voice shown).
   // Matchday also uses GPT-4o web search — but to gather official, safe LINKS
   // (FIFA/venue, transit, tickets, broadcast) rather than match facts.
+  // Choose My Team also runs a Stage-1 web search — but to gather the CURRENT
+  // 2026-tournament context (standings, form, who's playing well) that fits the
+  // fan's preferences, so Granite recommends from live facts, not just memory.
   const isMatchday = taskType === "matchday";
-  const useSearch = SEARCH_TASKS.has(taskType) || isMatchday;
+  const isTeams = taskType === "teams";
+  // Matchday only searches the web when it is FOCUSED on a specific match (the
+  // fan picked a recommended team that has an upcoming fixture). A generic venue
+  // checklist needs no match-specific links — those only added noise and wrong
+  // links before.
+  const matchdaySearch = isMatchday && userContext.matchFocused;
+  const useSearch = SEARCH_TASKS.has(taskType) || matchdaySearch || isTeams;
 
   let verifiedFacts = null;
   if (useSearch) {
     try {
-      const factPrompt = isMatchday
+      const factPrompt = matchdaySearch
         ? buildLinkFindingPrompt(matchData, userContext)
-        : buildFactFindingPrompt(matchData, taskType, userQuestion, events);
+        : isTeams
+          ? buildTeamFactFindingPrompt(userQuestion)
+          : buildFactFindingPrompt(matchData, taskType, userQuestion, events);
       verifiedFacts = await callOpenAIWithSearch(factPrompt);
+      // Drop any link that is not an official, allow-listed domain so a wrong or
+      // guessed URL can never reach the user.
+      if (matchdaySearch) verifiedFacts = sanitizeOfficialLinks(verifiedFacts);
     } catch (e) {
       // Graceful degradation: if GPT-4o web search is unavailable, Granite still
       // answers using the official football-data.org events alone (no links).
@@ -871,6 +998,9 @@ function renderTeams(sections, raw, matchData, userContext) {
   const isNote = (s) => /any team|valid|no wrong/i.test(s.title + " " + s.content);
   const teamSections = sections.filter((s) => !isNote(s));
   const noteSection  = sections.find((s) => isNote(s));
+  // Remember the recommended teams so the Matchday guide can offer them.
+  recommendedTeams = teamSections.map((s) => s.title);
+  renderMatchdayTeamPicker();
   const cards = teamSections
     .map((s) =>
       teamCard(
@@ -1305,6 +1435,8 @@ document.addEventListener("DOMContentLoaded", () => {
   activateTab("before");
   // Load live World Cup matches from the football-data.org API
   populateMatchDropdown();
+  // Initialise the matchday icon grid for the default venue (home).
+  renderMatchdayIcons("home");
 });
 
 function closeNav() {
@@ -1328,6 +1460,69 @@ function selectChip(groupId, btn) {
     .querySelectorAll(".chip-btn--select")
     .forEach((b) => b.classList.remove("selected"));
   btn.classList.add("selected");
+  // Keep the decorative matchday icon grid in sync with the chosen venue.
+  if (groupId === "matchday-chips") renderMatchdayIcons(btn.dataset.value);
+}
+
+/* Render the decorative matchday icon grid for the selected venue, so the
+   preview icons match the checklist the fan will actually get. */
+const MATCHDAY_ICON_SETS = {
+  home: [
+    ["source", "Broadcast"],
+    ["pitch", "Kickoff time"],
+    ["check", "Rules cheat-sheet"],
+    ["crowd", "Watch together"],
+  ],
+  bar: [
+    ["crowd", "Find a bar"],
+    ["stadium", "Arrive early"],
+    ["scarf", "Etiquette"],
+    ["transit", "Get home"],
+  ],
+  stadium: [
+    ["ticket", "Ticket"],
+    ["bag", "Bag policy"],
+    ["transit", "Transit"],
+    ["stadium", "Stadium gate"],
+    ["scarf", "What to wear"],
+    ["crowd", "Crowd noise"],
+  ],
+};
+function renderMatchdayIcons(venue) {
+  const grid = document.getElementById("matchday-icons");
+  if (!grid) return;
+  const set = MATCHDAY_ICON_SETS[venue] || MATCHDAY_ICON_SETS.home;
+  grid.innerHTML = set
+    .map(
+      ([icon, label], i) =>
+        `<div class="matchday-icon-item${i === set.length - 1 ? " matchday-icon-item--last" : ""}">
+          <div class="matchday-icon-wrap"><svg class="icon icon--md"><use href="#icon-${icon}"/></svg></div>
+          <div class="matchday-icon-label">${label}</div>
+        </div>`,
+    )
+    .join("");
+}
+
+/* Populate the Matchday "which team are you supporting?" picker from the most
+   recent Choose My Team result. Hidden until there are recommendations. */
+function renderMatchdayTeamPicker() {
+  const block = document.getElementById("matchday-team-block");
+  const strip = document.getElementById("matchday-teams");
+  if (!block || !strip) return;
+  if (!recommendedTeams.length) {
+    strip.innerHTML = "";
+    block.classList.add("hidden");
+    return;
+  }
+  strip.innerHTML = recommendedTeams
+    .map(
+      (name, i) =>
+        `<button class="chip-btn chip-btn--select${i === 0 ? " selected" : ""}" data-value="${escapeHTML(name)}" onclick="selectChip('matchday-teams',this)">
+          <svg class="icon icon--xs" aria-hidden="true"><use href="#icon-pitch"/></svg> ${escapeHTML(name)}
+        </button>`,
+    )
+    .join("");
+  block.classList.remove("hidden");
 }
 
 /* Multi-select chip toggle */
@@ -1507,7 +1702,7 @@ async function recommendTeams() {
   const matchData = getMatchData();
   const outputId = "team-output";
 
-  showLoading(outputId, "Finding your team…");
+  showLoading(outputId, "Checking the latest 2026 form…");
   scrollToOutput(outputId);
 
   try {
@@ -1529,19 +1724,52 @@ async function buildMatchdayChecklist() {
   );
   const venue = selected?.dataset.value || "home";
 
-  const userContext = { ...getUserContext(), viewContext: venue };
-  const matchData = getMatchData();
-  const outputId = "matchday-output";
+  // Optional: the team the fan picked from their Choose My Team recommendations.
+  const teamBtn = document.querySelector(
+    "#matchday-teams .chip-btn--select.selected",
+  );
+  const supportedTeam = teamBtn?.dataset.value || "";
 
+  const outputId = "matchday-output";
   showLoading(outputId, "Building your checklist…");
   scrollToOutput(outputId);
+
+  // The guide is GENERIC to the venue by default — deliberately NOT tied to any
+  // match, so it stays relevant and never drags in an unrelated match's facts
+  // or links. It focuses on a specific match ONLY when the fan picked a
+  // recommended team (the picker above) that has an upcoming fixture — then the
+  // venue and that team's next match line up together.
+  let matchData = { label: "World Cup 2026", stage: "Matchday prep", date: "" };
+  let nextMatchLabel = "";
+  let matchFocused = false;
+  if (supportedTeam) {
+    await ensureAllMatches();
+    const fx = getTeamFixtures(supportedTeam, allMatchesCache || []);
+    if (fx && fx.next && fx.next.raw) {
+      matchData = matchToData(fx.next.raw);
+      nextMatchLabel = `${matchData.label} on ${matchData.date} (${matchData.stage})`;
+      matchFocused = true;
+    }
+  }
+
+  const userContext = {
+    ...getUserContext(),
+    viewContext: venue,
+    supportedTeam,
+    matchFocused,
+  };
 
   const venueLabel = {
     home: "home viewing",
     bar: "bar / watch party",
     stadium: "stadium",
   };
-  const question = `Matchday checklist for: ${venueLabel[venue] || venue}`;
+  let question = `Matchday checklist for: ${venueLabel[venue] || venue}`;
+  if (supportedTeam) {
+    question += matchFocused
+      ? `. The fan supports ${supportedTeam}; their next match is ${nextMatchLabel}.`
+      : `. The fan supports ${supportedTeam} (no upcoming fixture found — keep advice general to the team and venue).`;
+  }
 
   try {
     renderOutput(
@@ -2171,6 +2399,8 @@ function mockTeams(userContext, prefs) {
   }
 
   const topTeams = teams.slice(0, 3); // max 3 recommendations
+  recommendedTeams = topTeams.map((t) => t.name);
+  renderMatchdayTeamPicker();
 
   const cards = topTeams
     .map((t) =>

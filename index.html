@@ -1060,8 +1060,14 @@
         </button>
       </div>
 
-      <!-- Matchday icon grid -->
-      <div class="matchday-icons" aria-hidden="true">
+      <!-- Supported-team picker — populated from "Choose My Team" above -->
+      <div id="matchday-team-block" class="matchday-team-block hidden">
+        <span class="form-label--helper">Which team are you supporting? (from your recommendations above)</span>
+        <div class="chip-strip chip-strip--wrap" id="matchday-teams"></div>
+      </div>
+
+      <!-- Matchday icon grid — updated to match the selected venue -->
+      <div class="matchday-icons" id="matchday-icons" aria-hidden="true">
         <div class="matchday-icon-item">
           <div class="matchday-icon-wrap"><svg class="icon icon--md"><use href="#icon-ticket"/></svg></div>
           <div class="matchday-icon-label">Ticket</div>

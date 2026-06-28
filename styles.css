@@ -839,6 +839,10 @@ section[data-tab].tab-active { display: block; }
   line-height: 1.62;
 }
 
+/* ── Matchday supported-team picker ── */
+.matchday-team-block { margin-top: 14px; }
+.matchday-team-block.hidden { display: none; }
+
 /* ── Team card fixtures (recent results + next match) ── */
 .team-card__fixtures {
   margin-top: 12px;
