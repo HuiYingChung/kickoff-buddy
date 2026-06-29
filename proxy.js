@@ -16,6 +16,7 @@ const path  = require('path');
 
 const { watsonxChat }    = require('./lib/watsonx');
 const { checkRateLimit } = require('./lib/ratelimit');
+const { resolveOrigin }  = require('./lib/cors');
 
 const PORT              = process.env.PORT || 3001;
 const FOOTBALL_DATA_KEY = process.env.FOOTBALL_DATA_KEY;
@@ -56,13 +57,27 @@ const MIME = {
 const MAX_BODY_BYTES = 16 * 1024; // 16 KB — enough for any prompt
 
 const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  // Origin allowlist: echo only approved origins (never a wildcard), and below
+  // we reject disallowed browser origins on the paid AI routes.
+  const origin = resolveOrigin(req.headers && req.headers.origin, req.headers && req.headers.host);
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   // Handle preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  // Reject disallowed browser origins on the paid AI endpoints so other sites
+  // can't spend the OpenAI / watsonx keys.
+  const isAiRoute = req.url === '/api/ai' || req.url === '/api/ai-search';
+  if (isAiRoute && origin === null) {
+    sendJson(res, 403, { error: { message: 'Origin not allowed.' } });
     return;
   }
 

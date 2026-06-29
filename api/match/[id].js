@@ -3,8 +3,14 @@
 // Vercel serverless route for a single match's detail (goals, cards, subs).
 // Mirrors the /api/match/:id endpoint in proxy.js so live event data works
 // in production as well as locally.
+const { resolveOrigin } = require('../../lib/cors');
+
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = resolveOrigin(req.headers && req.headers.origin, req.headers && req.headers.host);
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
 
   const FOOTBALL_DATA_KEY = process.env.FOOTBALL_DATA_KEY;
   if (!FOOTBALL_DATA_KEY) {

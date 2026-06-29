@@ -15,3 +15,9 @@ Thumbs.db
 .idea/
 *.suo
 *.user
+
+# Internal security notes — don't publish (it's a map of weaknesses)
+SECURITY-REVIEW.md
+
+# Claude Code — local, per-machine settings (paths, personal permissions)
+.claude/settings.local.json

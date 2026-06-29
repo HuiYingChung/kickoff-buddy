@@ -1,7 +1,13 @@
 'use strict';
 
+const { resolveOrigin } = require('../lib/cors');
+
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = resolveOrigin(req.headers && req.headers.origin, req.headers && req.headers.host);
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
 
   const FOOTBALL_DATA_KEY = process.env.FOOTBALL_DATA_KEY;
   if (!FOOTBALL_DATA_KEY) {

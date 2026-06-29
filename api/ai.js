@@ -6,9 +6,19 @@
 
 const { watsonxChat }    = require('../lib/watsonx');
 const { checkRateLimit } = require('../lib/ratelimit');
+const { resolveOrigin }  = require('../lib/cors');
 
 module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = resolveOrigin(req.headers && req.headers.origin, req.headers && req.headers.host);
+  if (origin === null) {
+    res.status(403).json({ error: { message: 'Origin not allowed.' } });
+    return;
+  }
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
