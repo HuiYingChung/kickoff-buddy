@@ -126,7 +126,7 @@ PORT=3001
 ALLOWED_ORIGINS=
 ```
 
-> `ALLOWED_ORIGINS` is optional. Same-origin and localhost requests are always allowed; set it (comma-separated) only to permit additional cross-origin frontends, e.g. `ALLOWED_ORIGINS=https://kickoff-buddy.vercel.app`.
+> `ALLOWED_ORIGINS` is optional. Same-origin and localhost requests are always allowed; set it (comma-separated) only to permit additional cross-origin frontends, e.g. `ALLOWED_ORIGINS=https://your-app.vercel.app`.
 
 Start the server:
 
@@ -177,6 +177,14 @@ The app runs in two interchangeable modes that share the same frontend:
 **Production (Vercel)** — the static files are served by Vercel's CDN and each file in `api/` becomes a serverless function. Set `FOOTBALL_DATA_KEY`, `OPENAI_API_KEY`, `WATSONX_API_KEY`, `WATSONX_PROJECT_ID`, and `WATSONX_URL` (and optionally `WATSONX_MODEL_ID` and `ALLOWED_ORIGINS`) in the Vercel project's Environment Variables (never in the repo). No build step is required.
 
 Both paths expose the identical `/api/*` surface, so the frontend code is the same in either mode.
+
+---
+
+## License
+
+© 2026 Hui Ying Chung. All rights reserved.
+
+This project is shared publicly for review as part of the IBM June Challenge. No permission is granted to copy, modify, redistribute, or reuse the code or content without the author's explicit written consent. See the [LICENSE](LICENSE) file for details.
 
 ---
 

@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "AI-powered World Cup companion for first-time fans — IBM June Challenge",
   "main": "proxy.js",
+  "private": true,
   "scripts": {
     "start": "node proxy.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
   "dependencies": {
     "dotenv": "^16.0.0"
   }
