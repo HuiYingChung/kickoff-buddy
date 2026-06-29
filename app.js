@@ -79,7 +79,9 @@ const MATCHDAY_LINKS_PROVENANCE = 'Official links found via <strong>GPT-4o</stro
 //     principles, and established facts, and uses GPT-4o's verified facts to
 //     ground the answer in THIS 2026 match. Granite is the single voice shown.
 // Every match-explanation feature is hybrid: GPT-4o verifies, Granite explains.
-// (teams/matchday stay Granite-only — they don't hinge on live match state.)
+// These tasks use the MATCH fact-finder (buildFactFindingPrompt, fed the events).
+// teams and matchday(focused) also run a GPT-4o search, but via their own prompts
+// (team form / official links) — see useSearch in getAIResponse, not this Set.
 const SEARCH_TASKS = new Set(["guide", "ask", "decision", "momentum"]);
 
 // Updated per request in getAIResponse so each result card shows the right
