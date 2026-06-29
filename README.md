@@ -70,7 +70,7 @@ So those features run a **two-stage hybrid**: `/api/ai-search` (GPT-4o) gathers 
 
 > **Live-score note:** football-data.org's free tier provides fixtures and final results but not minute-by-minute in-play scores. During a live match, GPT-4o web search is what brings the answer closest to the real-time situation; a paid match-data feed would be needed for a true live score stream.
 
-All API calls are routed **server-side** so that keys are never exposed in the browser or the public codebase. Confirmed match events from football-data.org are injected into every prompt as ground truth, so the AI references real incidents and is told to say so honestly when something cannot be confirmed — never to fabricate live facts. Off-topic questions are filtered out, and the AI endpoints are rate-limited per user.
+All API calls are routed **server-side** so that keys are never exposed in the browser or the public codebase. Confirmed match events from football-data.org are injected into every prompt as ground truth, so the AI references real incidents and is told to say so honestly when something cannot be confirmed — never to fabricate live facts. Off-topic questions are filtered out, the AI endpoints are rate-limited per user, and an origin allowlist (`lib/cors.js`) blocks other websites from calling the paid AI endpoints from the browser.
 
 ### Tech Stack
 
@@ -123,7 +123,10 @@ WATSONX_PROJECT_ID=your_watsonx_project_id_here
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
 WATSONX_MODEL_ID=ibm/granite-3-8b-instruct
 PORT=3001
+ALLOWED_ORIGINS=
 ```
+
+> `ALLOWED_ORIGINS` is optional. Same-origin and localhost requests are always allowed; set it (comma-separated) only to permit additional cross-origin frontends, e.g. `ALLOWED_ORIGINS=https://kickoff-buddy.vercel.app`.
 
 Start the server:
 
@@ -152,7 +155,8 @@ kickoff-buddy/
 │   └── match/[id].js   #   /api/match/:id  — per-match events
 ├── lib/                # Shared helpers (used by proxy.js and api/)
 │   ├── watsonx.js      #   IBM watsonx.ai Granite client (IAM token + chat)
-│   └── ratelimit.js    #   Per-IP rate limiting for the AI endpoints
+│   ├── ratelimit.js    #   Per-IP rate limiting for the AI endpoints
+│   └── cors.js         #   Origin allowlist — protects the paid AI endpoints
 ├── test-watsonx.js     # Dev script — checks watsonx.ai (Granite) connectivity
 ├── vercel.json         # Vercel function config (timeout)
 ├── favicon.svg
@@ -170,7 +174,7 @@ The app runs in two interchangeable modes that share the same frontend:
 
 **Local development** — `npm start` runs `proxy.js`, a small Node HTTP server that serves the static files and proxies `/api/*` requests to watsonx.ai, OpenAI, and football-data.org using keys from your local `.env`.
 
-**Production (Vercel)** — the static files are served by Vercel's CDN and each file in `api/` becomes a serverless function. Set `FOOTBALL_DATA_KEY`, `OPENAI_API_KEY`, `WATSONX_API_KEY`, `WATSONX_PROJECT_ID`, and `WATSONX_URL` (and optionally `WATSONX_MODEL_ID`) in the Vercel project's Environment Variables (never in the repo). No build step is required.
+**Production (Vercel)** — the static files are served by Vercel's CDN and each file in `api/` becomes a serverless function. Set `FOOTBALL_DATA_KEY`, `OPENAI_API_KEY`, `WATSONX_API_KEY`, `WATSONX_PROJECT_ID`, and `WATSONX_URL` (and optionally `WATSONX_MODEL_ID` and `ALLOWED_ORIGINS`) in the Vercel project's Environment Variables (never in the repo). No build step is required.
 
 Both paths expose the identical `/api/*` surface, so the frontend code is the same in either mode.
 
