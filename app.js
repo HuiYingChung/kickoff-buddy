@@ -554,6 +554,18 @@ function buildPrompt(userContext, matchData, taskType, userQuestion, events = nu
     stadium: "attending the stadium in person",
     unsure: "not sure yet",
   };
+  const goalMap = {
+    understand_match: "understand the match overall",
+    learn_rules: "learn the basic rules",
+    understand_decision: "understand referee / VAR decisions",
+    understand_momentum: "understand momentum shifts",
+    understand_tactics: "understand the tactics",
+    pick_team: "pick a team to follow",
+    matchday_prep: "prepare for matchday",
+    fan_culture: "learn about fan culture",
+  };
+  const goalText = goalMap[userContext.goal] || userContext.goal;
+  const contextText = contextMap[userContext.viewContext] || userContext.viewContext;
 
   const scoreInfo = matchData.scoreDisplay
     ? `${matchData.teamA} ${matchData.scoreDisplay} ${matchData.teamB}`
@@ -619,24 +631,65 @@ ${buildMatchEventsContext(events)}
   };
   const mdTopics = venueTopics[userContext.viewContext] || venueTopics.home;
 
+  // The user's goal fully drives the SHAPE of the guide — each goal gets its own
+  // section layout and focus, so "Learn fan culture" yields a fan-culture guide,
+  // "Pick a team" yields team recommendations, etc. (not one fixed skeleton).
+  // Knowledge sets depth; viewing moment/where set framing; the match is the subject.
+  const guideBlueprints = {
+    understand_match: {
+      title: "a personalised beginner guide to THIS match",
+      focus: "Introduce both teams simply and what's at stake, point out 3 specific things to watch in THIS match, and explain the 1–2 most relevant rules.",
+      sections: ["Match Overview", "The Two Teams", "Playing Styles", "3 Things to Watch", "Rules You May Need", "You're Ready"],
+    },
+    learn_rules: {
+      title: "a beginner's rulebook for THIS match",
+      focus: "Teach the handful of rules a first-timer most needs to enjoy THIS match. Explain each in one plain sentence, then show how it is likely to come up in this specific game. Keep it practical — not a full law book.",
+      sections: ["Match Overview", "The Rules That Matter Most", "How to Spot Them in This Match", "Quick Cheat-Sheet", "You're Ready"],
+    },
+    understand_decision: {
+      title: "a guide to the referee & VAR decisions in THIS match",
+      focus: "Explain the referee and VAR decisions a beginner is most likely to see in this match (offside, fouls, cards, penalties, handball), how the referee judges each, and how VAR fits in — all in plain language.",
+      sections: ["Match Overview", "Decisions You'll Likely See", "How the Referee Decides", "VAR, Explained Simply", "What to Watch For", "You're Ready"],
+    },
+    understand_momentum: {
+      title: "a guide to reading momentum in THIS match",
+      focus: "Teach the user to read the flow of the game — what momentum looks like, the visible signs that show which team is on top, and how a single moment (a goal, card, or substitution) can swing it.",
+      sections: ["Match Overview", "What Momentum Looks Like", "Signs to Watch in This Match", "How Coaches Respond", "You're Ready"],
+    },
+    understand_tactics: {
+      title: "a beginner's tactical guide to THIS match",
+      focus: "Explain, in beginner terms, how each team tries to play and the single key tactical battle that will likely decide this match. Avoid jargon, or explain it the moment you use it.",
+      sections: ["Match Overview", "How Each Team Plays", "The Key Tactical Battle", "What to Watch For", "You're Ready"],
+    },
+    pick_team: {
+      title: "help choosing which of these two teams to follow",
+      focus: "Help the user pick a team to support for this match. Introduce both teams warmly, give honest reasons someone might fall for each, and a simple way to follow them — but make clear either choice is valid.",
+      sections: ["The Two Teams", "Why You Might Love Each", "An Easy Pick For You", "How to Follow Along", "Any Team is Valid"],
+    },
+    matchday_prep: {
+      title: `a matchday preparation guide for someone ${contextText}`,
+      focus: `Help the user get ready for matchday as someone ${contextText}. Give concrete, practical preparation tips for that exact setting, what to expect, and the etiquette and atmosphere. Do NOT include stadium-only advice (tickets, bag policy, transit) unless they are attending in person.`,
+      sections: ["Match Overview", "Your Matchday Checklist", "What to Expect", "Etiquette & Atmosphere", "You're Ready"],
+    },
+    fan_culture: {
+      title: `a fan-culture guide to THIS match for someone ${contextText}`,
+      focus: `Immerse the user in the fan culture around this match. Cover both teams' supporter cultures, the chants, colours, and rituals, the atmosphere to expect ${contextText}, and how a newcomer can join in and feel part of it.`,
+      sections: ["Match Overview", "The Two Teams' Fan Cultures", "Chants, Colours & Rituals", "The Atmosphere to Expect", "Join In Like a Local", "You're Ready"],
+    },
+  };
+  const guide = guideBlueprints[userContext.goal] || guideBlueprints.understand_match;
+  const guideFormat = guide.sections.map((s) => `## ${s}`).join("\n");
+  const hasWatchList = guide.sections.some((s) => /3 things/i.test(s));
+
   const taskInstructions = {
     guide: `
-TASK: Generate a personalised beginner match guide for this specific match.
-FOCUS ON:
-1. Introduce the two teams in simple terms — who they are, their playing style, and what is at stake for each in this match.
-2. Tailor the depth to the user's knowledge level (${knowledgeMap[userContext.knowledge] || userContext.knowledge}).
-3. Give exactly 3 specific things to watch for in THIS match — not generic soccer tips.
-4. Briefly explain the 1–2 rules most relevant to this match's context.
-5. Close with a short, warm note that makes the user feel ready and excited.
-DO NOT: Predict the result of an unplayed match. Do not invent a date, year, or score — use only the MATCH details above. Do not give a generic soccer lesson — everything must connect to this match. If the match is already live or finished, open by acknowledging that honestly instead of pretending it is upcoming.
-RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
-## Match Overview
-## The Two Teams
-## Playing Styles
-## 3 Things to Watch
-## Rules You May Need
-## You're Ready
-For "## 3 Things to Watch" only, format each item as: 1. **Heading**: Description`,
+TASK: Generate ${guide.title}. The user's goal is to ${goalText}, so build the WHOLE guide around that — this is not a generic match guide.
+FOCUS: ${guide.focus}
+ADAPT THE DEPTH to the user's knowledge level (${knowledgeMap[userContext.knowledge] || userContext.knowledge}) and keep every point tied to THIS match — never a generic soccer lesson.
+TAILOR TO WHERE THEY ARE WATCHING — they are ${contextText}. Make any watching, atmosphere, or preparation tips fit that exact setting (e.g. crowd and chant cues at a bar or stadium; broadcast and replay cues at home).
+DO NOT: Predict the result of an unplayed match. Do not invent a date, year, or score — use only the MATCH details above. If the match is already live or finished, open by acknowledging that honestly instead of pretending it is upcoming.
+RESPONSE FORMAT — output EXACTLY these ## section headings, in this order, no extras:
+${guideFormat}${hasWatchList ? `\nFor "## 3 Things to Watch" only, format each item as: 1. **Heading**: Description` : ""}`,
 
     ask: `
 TASK: Answer the user's specific question, using confirmed match event data where relevant.
@@ -746,7 +799,7 @@ USER PROFILE:
 - Soccer knowledge: ${knowledgeMap[userContext.knowledge] || userContext.knowledge}
 - Viewing moment: ${momentMap[userContext.moment] || userContext.moment}
 - Viewing context: ${contextMap[userContext.viewContext] || userContext.viewContext}
-- Main goal: ${userContext.goal}
+- Main goal: ${goalText}
 
 TODAY'S DATE: ${todayStr}. This is the live FIFA World Cup 2026. Treat all dates and the year accordingly — never state a different year.
 
@@ -956,7 +1009,18 @@ function renderGuide(sections, raw, matchData, userContext) {
     }
     return rs("", s.title, mdToHtml(s.content));
   }).join("") || `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
-  return ticketCard(matchData, userContext, "Match Guide", body);
+  const guideLabels = {
+    understand_match: "Match Guide",
+    learn_rules: "Rules Guide",
+    understand_decision: "Referee & VAR Guide",
+    understand_momentum: "Momentum Guide",
+    understand_tactics: "Tactics Guide",
+    pick_team: "Team Picker",
+    matchday_prep: "Matchday Guide",
+    fan_culture: "Fan Culture Guide",
+  };
+  const guideLabel = guideLabels[userContext?.goal] || "Match Guide";
+  return ticketCard(matchData, userContext, guideLabel, body);
 }
 
 /* ── Ask: direct answer → cause → significance → what to watch ── */
