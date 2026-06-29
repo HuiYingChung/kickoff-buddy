@@ -331,6 +331,11 @@ function teamFixturesHtml(title, matches) {
 /* ─────────────────────────────────────────────────────────────
    OPENAI INTEGRATION
 ───────────────────────────────────────────────────────────── */
+// Shown when watsonx is rate-limited (429) even after the server's retries —
+// a transient free-tier capacity blip, not a real failure.
+const AI_BUSY_MESSAGE =
+  "Buddy is getting a lot of questions right now. Give it a few seconds and ask again.";
+
 // Granite (IBM watsonx.ai) — the explainer. Writes the final answer for every
 // feature; on live tasks the prompt already contains GPT-4o's verified facts.
 async function callGranite(prompt) {
@@ -343,8 +348,14 @@ async function callGranite(prompt) {
       temperature: 0.7,
     }),
   });
-  const data = await res.json();
-  if (data.error) throw new Error(`AI: ${data.error.message}`);
+  const data = await res.json().catch(() => ({}));
+  // Too Many Requests / capacity: the server already retried with backoff, so if
+  // it still comes through, show a calm "Buddy is busy" message, not a raw error.
+  const errMsg = data.error?.message || "";
+  if (res.status === 429 || /concurrent|too many|rate limit|limit \d/i.test(errMsg)) {
+    throw new Error(AI_BUSY_MESSAGE);
+  }
+  if (data.error) throw new Error(`AI: ${errMsg}`);
   return data.choices?.[0]?.message?.content ?? "";
 }
 
@@ -1219,6 +1230,7 @@ function showLoading(outputId, message = "Thinking…") {
   if (!el) return;
   el.classList.remove("hidden");
   el.innerHTML = `
+    ${aiAvatarRow()}
     <div class="loading-card">
       <div class="loading-dots">
         <div class="loading-dots__dot"></div>
@@ -1229,11 +1241,19 @@ function showLoading(outputId, message = "Thinking…") {
     </div>`;
 }
 
+function aiAvatarRow(label = "Buddy") {
+  return `
+    <div class="ai-byline">
+      <img class="ai-byline__avatar" src="images/ai_avatar.png" alt="Kickoff Buddy AI assistant" width="40" height="40">
+      <span class="ai-byline__name">${label}</span>
+    </div>`;
+}
+
 function renderOutput(outputId, html) {
   const el = document.getElementById(outputId);
   if (!el) return;
   el.classList.remove("hidden");
-  el.innerHTML = html;
+  el.innerHTML = aiAvatarRow() + html;
 }
 
 function scrollToOutput(outputId) {
@@ -2416,6 +2436,9 @@ function warningCard(question) {
 }
 
 function errorCard(message) {
+  // Rate-limit / capacity blips get a calm, friendly card instead of a scary
+  // red "something went wrong" — it's transient and the user just needs to wait.
+  if (message === AI_BUSY_MESSAGE) return busyCard(message);
   return `
   <div class="result-card">
     <div class="result-card__ticket-header" style="background:#7a1a1a;">
@@ -2427,6 +2450,21 @@ function errorCard(message) {
     <div class="result-card__body">
       <p style="color:var(--ref-red);font-size:0.88rem;">${escapeHTML(message)}</p>
       ${noticeBox("Please try again. If this keeps happening, check the browser console for details.", "info")}
+    </div>
+  </div>`;
+}
+
+function busyCard(message) {
+  return `
+  <div class="result-card">
+    <div class="result-card__ticket-header" style="background:var(--ibm-blue);">
+      <div class="result-card__ticket-main">
+        <div class="result-card__title">One moment</div>
+        <div class="result-card__match">Buddy is catching up</div>
+      </div>
+    </div>
+    <div class="result-card__body">
+      <p style="font-size:0.92rem;">${escapeHTML(message)}</p>
     </div>
   </div>`;
 }
