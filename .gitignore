@@ -21,3 +21,7 @@ SECURITY-REVIEW.md
 
 # Claude Code — local, per-machine settings (paths, personal permissions)
 .claude/settings.local.json
+
+# Demo / video materials — not part of the codebase, keep out of the repo
+pitch-video-script.md
+demo/
