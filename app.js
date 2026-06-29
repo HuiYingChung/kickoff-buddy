@@ -434,11 +434,18 @@ you are NOT writing recommendations, rankings, or advice for the end user.
 THE FAN'S STATED PREFERENCES: "${prefs}"
 
 WHAT TO FIND — for the World Cup 2026 as it stands RIGHT NOW, surface candidate teams
-whose situation fits those preferences, each with concrete current facts:
-- current group standing / knockout progress and recent results (with scores),
-- standout players and the playing style each team has shown so far this tournament,
-- notable underdog or emotional storylines, host-nation status, and strong sides by
-  confederation (Asian / Americas / European) — whichever match the preferences.
+whose situation fits those preferences. Gather facts for the SPECIFIC dimensions the
+fan selected, each with concrete current detail:
+- current group standing / knockout progress and recent results (with scores);
+- star / standout players (for "famous players");
+- playing STYLE shown so far, described specifically — attacking, defensive / organised,
+  or possession & passing ("beautiful teamwork") — never just "good" or "strong";
+- storylines: underdog runs, emotional stories, and a team's cultural / historical
+  significance or fan culture (for "strong cultural story");
+- host-nation status (USA, Canada, Mexico) and confederation (AFC / CONMEBOL / CONCACAF /
+  UEFA), so region and host preferences can be honoured exactly.
+Prioritise the dimensions the fan actually chose. For any region or host preference, every
+candidate you list for it MUST belong to that region / host group.
 
 INSTRUCTIONS:
 - Use web search for the CURRENT 2026 state; today's date matters — report the latest
@@ -449,7 +456,7 @@ INSTRUCTIONS:
 
 OUTPUT FORMAT (keep under ~200 words):
 VERIFIED FACTS:
-- <team>: <current standing / result / style> (source: <site>)
+- <team>: <standing / result / style / storyline relevant to the preferences> (source: <site>)
 UNCONFIRMED:
 - <anything you could not confirm>`.trim();
 }
@@ -554,18 +561,6 @@ function buildPrompt(userContext, matchData, taskType, userQuestion, events = nu
     stadium: "attending the stadium in person",
     unsure: "not sure yet",
   };
-  const goalMap = {
-    understand_match: "understand the match overall",
-    learn_rules: "learn the basic rules",
-    understand_decision: "understand referee / VAR decisions",
-    understand_momentum: "understand momentum shifts",
-    understand_tactics: "understand the tactics",
-    pick_team: "pick a team to follow",
-    matchday_prep: "prepare for matchday",
-    fan_culture: "learn about fan culture",
-  };
-  const goalText = goalMap[userContext.goal] || userContext.goal;
-  const contextText = contextMap[userContext.viewContext] || userContext.viewContext;
 
   const scoreInfo = matchData.scoreDisplay
     ? `${matchData.teamA} ${matchData.scoreDisplay} ${matchData.teamB}`
@@ -631,65 +626,24 @@ ${buildMatchEventsContext(events)}
   };
   const mdTopics = venueTopics[userContext.viewContext] || venueTopics.home;
 
-  // The user's goal fully drives the SHAPE of the guide — each goal gets its own
-  // section layout and focus, so "Learn fan culture" yields a fan-culture guide,
-  // "Pick a team" yields team recommendations, etc. (not one fixed skeleton).
-  // Knowledge sets depth; viewing moment/where set framing; the match is the subject.
-  const guideBlueprints = {
-    understand_match: {
-      title: "a personalised beginner guide to THIS match",
-      focus: "Introduce both teams simply and what's at stake, point out 3 specific things to watch in THIS match, and explain the 1–2 most relevant rules.",
-      sections: ["Match Overview", "The Two Teams", "Playing Styles", "3 Things to Watch", "Rules You May Need", "You're Ready"],
-    },
-    learn_rules: {
-      title: "a beginner's rulebook for THIS match",
-      focus: "Teach the handful of rules a first-timer most needs to enjoy THIS match. Explain each in one plain sentence, then show how it is likely to come up in this specific game. Keep it practical — not a full law book.",
-      sections: ["Match Overview", "The Rules That Matter Most", "How to Spot Them in This Match", "Quick Cheat-Sheet", "You're Ready"],
-    },
-    understand_decision: {
-      title: "a guide to the referee & VAR decisions in THIS match",
-      focus: "Explain the referee and VAR decisions a beginner is most likely to see in this match (offside, fouls, cards, penalties, handball), how the referee judges each, and how VAR fits in — all in plain language.",
-      sections: ["Match Overview", "Decisions You'll Likely See", "How the Referee Decides", "VAR, Explained Simply", "What to Watch For", "You're Ready"],
-    },
-    understand_momentum: {
-      title: "a guide to reading momentum in THIS match",
-      focus: "Teach the user to read the flow of the game — what momentum looks like, the visible signs that show which team is on top, and how a single moment (a goal, card, or substitution) can swing it.",
-      sections: ["Match Overview", "What Momentum Looks Like", "Signs to Watch in This Match", "How Coaches Respond", "You're Ready"],
-    },
-    understand_tactics: {
-      title: "a beginner's tactical guide to THIS match",
-      focus: "Explain, in beginner terms, how each team tries to play and the single key tactical battle that will likely decide this match. Avoid jargon, or explain it the moment you use it.",
-      sections: ["Match Overview", "How Each Team Plays", "The Key Tactical Battle", "What to Watch For", "You're Ready"],
-    },
-    pick_team: {
-      title: "help choosing which of these two teams to follow",
-      focus: "Help the user pick a team to support for this match. Introduce both teams warmly, give honest reasons someone might fall for each, and a simple way to follow them — but make clear either choice is valid.",
-      sections: ["The Two Teams", "Why You Might Love Each", "An Easy Pick For You", "How to Follow Along", "Any Team is Valid"],
-    },
-    matchday_prep: {
-      title: `a matchday preparation guide for someone ${contextText}`,
-      focus: `Help the user get ready for matchday as someone ${contextText}. Give concrete, practical preparation tips for that exact setting, what to expect, and the etiquette and atmosphere. Do NOT include stadium-only advice (tickets, bag policy, transit) unless they are attending in person.`,
-      sections: ["Match Overview", "Your Matchday Checklist", "What to Expect", "Etiquette & Atmosphere", "You're Ready"],
-    },
-    fan_culture: {
-      title: `a fan-culture guide to THIS match for someone ${contextText}`,
-      focus: `Immerse the user in the fan culture around this match. Cover both teams' supporter cultures, the chants, colours, and rituals, the atmosphere to expect ${contextText}, and how a newcomer can join in and feel part of it.`,
-      sections: ["Match Overview", "The Two Teams' Fan Cultures", "Chants, Colours & Rituals", "The Atmosphere to Expect", "Join In Like a Local", "You're Ready"],
-    },
-  };
-  const guide = guideBlueprints[userContext.goal] || guideBlueprints.understand_match;
-  const guideFormat = guide.sections.map((s) => `## ${s}`).join("\n");
-  const hasWatchList = guide.sections.some((s) => /3 things/i.test(s));
-
   const taskInstructions = {
     guide: `
-TASK: Generate ${guide.title}. The user's goal is to ${goalText}, so build the WHOLE guide around that — this is not a generic match guide.
-FOCUS: ${guide.focus}
-ADAPT THE DEPTH to the user's knowledge level (${knowledgeMap[userContext.knowledge] || userContext.knowledge}) and keep every point tied to THIS match — never a generic soccer lesson.
-TAILOR TO WHERE THEY ARE WATCHING — they are ${contextText}. Make any watching, atmosphere, or preparation tips fit that exact setting (e.g. crowd and chant cues at a bar or stadium; broadcast and replay cues at home).
-DO NOT: Predict the result of an unplayed match. Do not invent a date, year, or score — use only the MATCH details above. If the match is already live or finished, open by acknowledging that honestly instead of pretending it is upcoming.
-RESPONSE FORMAT — output EXACTLY these ## section headings, in this order, no extras:
-${guideFormat}${hasWatchList ? `\nFor "## 3 Things to Watch" only, format each item as: 1. **Heading**: Description` : ""}`,
+TASK: Generate a personalised beginner match guide for this specific match.
+FOCUS ON:
+1. Introduce the two teams in simple terms — who they are, their playing style, and what is at stake for each in this match.
+2. Tailor the depth to the user's knowledge level (${knowledgeMap[userContext.knowledge] || userContext.knowledge}).
+3. Give exactly 3 specific things to watch for in THIS match — not generic soccer tips.
+4. Briefly explain the 1–2 rules most relevant to this match's context.
+5. Close with a short, warm note that makes the user feel ready and excited.
+DO NOT: Predict the result of an unplayed match. Do not invent a date, year, or score — use only the MATCH details above. Do not give a generic soccer lesson — everything must connect to this match. If the match is already live or finished, open by acknowledging that honestly instead of pretending it is upcoming.
+RESPONSE FORMAT — output these ## section headings in this exact order, no extras:
+## Match Overview
+## The Two Teams
+## Playing Styles
+## 3 Things to Watch
+## Rules You May Need
+## You're Ready
+For "## 3 Things to Watch" only, format each item as: 1. **Heading**: Description`,
 
     ask: `
 TASK: Answer the user's specific question, using confirmed match event data where relevant.
@@ -750,8 +704,13 @@ RESPONSE FORMAT — output these ## section headings in this exact order, no ext
     teams: `
 TASK: Recommend 2–3 World Cup teams that suit this specific user's interests and personality.
 THE USER'S PREFERENCES: "${userQuestion}"
-FACT: World Cup 2026 is co-hosted by THREE nations — the United States, Canada, and Mexico. If the user's preferences include the host country / host nation, treat all three as the host options and lead with them (you may recommend the hosts themselves as the picks).
-FOCUS ON:
+HARD CONSTRAINT: every team you recommend MUST satisfy these preferences. If the user named a region, confederation, or the host nation, recommend ONLY teams from that group and NEVER one from outside it:
+- "an Asian team" -> only AFC (Asian) nations.
+- "a team from the Americas" -> only CONMEBOL or CONCACAF nations.
+- "a European powerhouse" -> only UEFA (European) nations.
+- "a host nation" -> only the United States, Canada, or Mexico.
+If a preference combines a region with a style (e.g. "Asian team" + "attacking style"), every pick must match the region first, then the style. If two different regions are chosen, give at least one pick from each. If two opposing styles are chosen (e.g. defensive discipline + attacking style), either pick teams that genuinely blend both or cover each style with at least one pick.
+${/host/i.test(userQuestion) ? `FACT: World Cup 2026 is co-hosted by the United States, Canada, and Mexico.\n` : ""}FOCUS ON:
 1. Match the recommendations directly to what the user told you — explain WHY each team suits THEM personally.
 2. For each team, give a concrete "what to watch for" tip that a beginner can act on immediately.
 3. Keep recommendations personal and specific, not a history textbook.
@@ -799,7 +758,7 @@ USER PROFILE:
 - Soccer knowledge: ${knowledgeMap[userContext.knowledge] || userContext.knowledge}
 - Viewing moment: ${momentMap[userContext.moment] || userContext.moment}
 - Viewing context: ${contextMap[userContext.viewContext] || userContext.viewContext}
-- Main goal: ${goalText}
+- Main goal: ${userContext.goal}
 
 TODAY'S DATE: ${todayStr}. This is the live FIFA World Cup 2026. Treat all dates and the year accordingly — never state a different year.
 
@@ -1009,18 +968,7 @@ function renderGuide(sections, raw, matchData, userContext) {
     }
     return rs("", s.title, mdToHtml(s.content));
   }).join("") || `<div class="result-section"><div class="result-section__text">${mdToHtml(raw)}</div></div>`;
-  const guideLabels = {
-    understand_match: "Match Guide",
-    learn_rules: "Rules Guide",
-    understand_decision: "Referee & VAR Guide",
-    understand_momentum: "Momentum Guide",
-    understand_tactics: "Tactics Guide",
-    pick_team: "Team Picker",
-    matchday_prep: "Matchday Guide",
-    fan_culture: "Fan Culture Guide",
-  };
-  const guideLabel = guideLabels[userContext?.goal] || "Match Guide";
-  return ticketCard(matchData, userContext, guideLabel, body);
+  return ticketCard(matchData, userContext, "Match Guide", body);
 }
 
 /* ── Ask: direct answer → cause → significance → what to watch ── */
@@ -1501,6 +1449,13 @@ document.addEventListener("DOMContentLoaded", () => {
   populateMatchDropdown();
   // Initialise the matchday icon grid for the default venue (home).
   renderMatchdayIcons("home");
+  // Interactive offside explainer.
+  initOffsideLab();
+  // Momentum meter (drag + stackable events) and tactical board.
+  initMomentumDrag();
+  renderMomentumMeter();
+  renderTimeline();
+  initTacticalBoard();
 });
 
 function closeNav() {
@@ -1605,32 +1560,570 @@ function quickFill(targetId, text) {
   }
 }
 
-/* Momentum meter shift */
-function shiftMomentum(btn, pctA, description) {
-  // Clamp to a valid percentage
-  pctA = Math.max(0, Math.min(100, Number(pctA) || 50));
+/* ─────────────────────────────────────────────────────────────
+   MOMENTUM METER — stackable events + draggable control
+   Control value = % in Team A's favour (0–100, 50 = even).
+───────────────────────────────────────────────────────────── */
+
+const MOMENTUM_EVENTS = {
+  goalA:  { label: "Team A goal",  delta:  20, icon: "pitch",    desc: "Team A scores. Confidence surges; Team B must reorganise and chase the game." },
+  goalB:  { label: "Team B goal",  delta: -20, icon: "pitch",    desc: "Team B scores. The swing flips — Team A now has to react and reopen the game." },
+  redA:   { label: "Red card (A)", delta: -27, icon: "red-card", desc: "Team A goes down to 10 men — they must defend deeper and can attack far less." },
+  subA:   { label: "A makes a sub",delta:  11, icon: "arrow",    desc: "Fresh legs from Team A's bench inject energy and can change the tactical picture." },
+  pressA: { label: "A high press", delta:  13, icon: "arrow",    desc: "Team A presses high, forcing Team B back and winning the ball in dangerous areas." },
+  crowd:  { label: "Crowd lifts A",delta:   8, icon: "crowd",    desc: "A roaring home crowd lifts Team A's adrenaline and can unsettle the visitors." },
+  tiredA: { label: "A tiring",     delta: -12, icon: "player",   desc: "Team A's legs are heavy late on; the fresher side starts to take over." },
+};
+
+const MOMENTUM = { value: 50, events: [], dragging: false };
+
+const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n)));
+
+function renderMomentumMeter() {
+  const pctA = clampPct(MOMENTUM.value);
   const pctB = 100 - pctA;
-
-  // Update chip selection
-  const group = document.getElementById("momentum-chips");
-  if (group)
-    group
-      .querySelectorAll(".chip-btn--select")
-      .forEach((b) => b.classList.remove("selected"));
-  btn.classList.add("selected");
-
-  // Update the meter
-  const fillA = document.getElementById("momentum-fill-a");
-  const fillB = document.getElementById("momentum-fill-b");
+  const fillA  = document.getElementById("momentum-fill-a");
+  const fillB  = document.getElementById("momentum-fill-b");
   const labelA = document.getElementById("momentum-pct-a");
   const labelB = document.getElementById("momentum-pct-b");
-  const desc = document.getElementById("momentum-desc");
-
+  const handle = document.getElementById("momentum-handle");
+  const bar    = document.getElementById("momentum-bar");
   if (fillA) fillA.style.width = pctA + "%";
   if (fillB) fillB.style.width = pctB + "%";
   if (labelA) labelA.textContent = pctA + "%";
   if (labelB) labelB.textContent = pctB + "%";
-  if (desc) desc.textContent = description;
+  if (handle) handle.style.left = pctA + "%";
+  if (bar) bar.setAttribute("aria-valuenow", pctA);
+}
+
+function addMomentumEvent(key, btn) {
+  const ev = MOMENTUM_EVENTS[key];
+  if (!ev) return;
+  MOMENTUM.value = clampPct(MOMENTUM.value + ev.delta);
+  MOMENTUM.events.push({ key });
+  renderMomentumMeter();
+  renderTimeline();
+  const desc = document.getElementById("momentum-desc");
+  if (desc) desc.textContent = ev.desc;
+  if (btn) {
+    btn.classList.add("just-added");
+    setTimeout(() => btn.classList.remove("just-added"), 450);
+  }
+}
+
+function renderTimeline() {
+  const list  = document.getElementById("momentum-timeline-list");
+  const empty = document.getElementById("momentum-timeline-empty");
+  const reset = document.getElementById("momentum-reset");
+  if (!list) return;
+  const has = MOMENTUM.events.length > 0;
+  if (empty) empty.hidden = has;
+  if (reset) reset.hidden = !has;
+
+  let running = 50;
+  list.innerHTML = MOMENTUM.events
+    .map((e, i) => {
+      if (e.manual) {
+        running = e.value;
+        return `<li class="momentum-timeline__item momentum-timeline__item--manual">
+          <span class="momentum-timeline__num">${i + 1}</span>
+          <span class="momentum-timeline__txt">You set the meter by hand</span>
+          <span class="momentum-timeline__pct">${running}% A</span>
+        </li>`;
+      }
+      const ev = MOMENTUM_EVENTS[e.key];
+      running = clampPct(running + ev.delta);
+      const sign = ev.delta > 0 ? "+" : "";
+      const dir = ev.delta > 0 ? "a" : "b";
+      return `<li class="momentum-timeline__item">
+        <span class="momentum-timeline__num">${i + 1}</span>
+        <svg class="icon icon--xs" aria-hidden="true"><use href="#icon-${ev.icon}"/></svg>
+        <span class="momentum-timeline__txt">${ev.label}</span>
+        <span class="momentum-timeline__delta momentum-timeline__delta--${dir}">${sign}${ev.delta}</span>
+        <span class="momentum-timeline__pct">${running}% A</span>
+      </li>`;
+    })
+    .join("");
+}
+
+function resetMomentum() {
+  MOMENTUM.value = 50;
+  MOMENTUM.events = [];
+  renderMomentumMeter();
+  renderTimeline();
+  const desc = document.getElementById("momentum-desc");
+  if (desc) desc.textContent =
+    "Tap an event below — or drag the meter — to explore the momentum shift.";
+}
+
+function initMomentumDrag() {
+  const bar = document.getElementById("momentum-bar");
+  if (!bar) return;
+  const pctFromEvent = (clientX) => {
+    const r = bar.getBoundingClientRect();
+    return clampPct(((clientX - r.left) / r.width) * 100);
+  };
+  const setManual = (pct) => {
+    MOMENTUM.value = pct;
+    const last = MOMENTUM.events[MOMENTUM.events.length - 1];
+    if (last && last.manual) last.value = pct;
+    else MOMENTUM.events.push({ manual: true, value: pct });
+    renderMomentumMeter();
+    renderTimeline();
+    const desc = document.getElementById("momentum-desc");
+    if (desc) desc.textContent =
+      pct > 55 ? "You see Team A on top — press Explain the Shift for the likely why."
+      : pct < 45 ? "You see Team B on top — press Explain the Shift for the likely why."
+      : "You read it as evenly poised — press Explain the Shift for the likely why.";
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    MOMENTUM.dragging = true;
+    bar.setPointerCapture?.(e.pointerId);
+    bar.classList.add("is-dragging");
+    setManual(pctFromEvent(e.clientX));
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (MOMENTUM.dragging) setManual(pctFromEvent(e.clientX));
+  });
+  const end = (e) => {
+    if (!MOMENTUM.dragging) return;
+    MOMENTUM.dragging = false;
+    bar.classList.remove("is-dragging");
+    bar.releasePointerCapture?.(e.pointerId);
+  };
+  bar.addEventListener("pointerup", end);
+  bar.addEventListener("pointercancel", end);
+  bar.addEventListener("keydown", (e) => {
+    let d = 0;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") d = 3;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") d = -3;
+    else if (e.key === "Home") return setManual(0);
+    else if (e.key === "End") return setManual(100);
+    if (d) { e.preventDefault(); setManual(clampPct(MOMENTUM.value + d)); }
+  });
+}
+
+function momentumStorySummary() {
+  if (!MOMENTUM.events.length) return "";
+  const parts = MOMENTUM.events.map((e) =>
+    e.manual ? `viewer set control to ${e.value}% Team A`
+             : MOMENTUM_EVENTS[e.key].label,
+  );
+  return `Match events in order: ${parts.join(" → ")}. ` +
+    `Current match-control meter reads ${clampPct(MOMENTUM.value)}% Team A / ${100 - clampPct(MOMENTUM.value)}% Team B.`;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TACTICAL BOARD — switchable formations, game plans, tooltips
+───────────────────────────────────────────────────────────── */
+
+const ROLE_INFO = {
+  GK:  "Goalkeeper — last line of defence; starts attacks with the ball at their feet.",
+  RB:  "Right-back — defends the right flank and overlaps to support attacks.",
+  LB:  "Left-back — defends the left flank and overlaps to support attacks.",
+  CB:  "Centre-back — the central defensive wall; heads clearances and marks strikers.",
+  RWB: "Right wing-back — covers the whole right flank, defending and attacking.",
+  LWB: "Left wing-back — covers the whole left flank, defending and attacking.",
+  DM:  "Defensive midfielder — shields the back line and breaks up opposition attacks.",
+  CM:  "Central midfielder — the engine; links defence and attack and controls tempo.",
+  RM:  "Right midfielder — provides width and crosses from the right.",
+  LM:  "Left midfielder — provides width and crosses from the left.",
+  AM:  "Attacking midfielder — creates chances between the lines behind the strikers.",
+  RW:  "Right winger — hugs the touchline to beat defenders and deliver crosses.",
+  LW:  "Left winger — hugs the touchline to beat defenders and deliver crosses.",
+  ST:  "Striker — the main goal threat, leading the line up front.",
+};
+
+const FORMATIONS_A = {
+  "433": [
+    [24,115,"GK"],
+    [68,68,"RB"],[68,95,"CB"],[68,132,"CB"],[68,159,"LB"],
+    [120,80,"CM"],[120,115,"CM"],[120,150,"CM"],
+    [162,75,"RW"],[162,115,"ST"],[162,155,"LW"],
+  ],
+  "4231": [
+    [24,115,"GK"],
+    [64,68,"RB"],[64,95,"CB"],[64,132,"CB"],[64,159,"LB"],
+    [100,100,"DM"],[100,130,"DM"],
+    [140,72,"RW"],[140,115,"AM"],[140,158,"LW"],
+    [170,115,"ST"],
+  ],
+  "442": [
+    [24,115,"GK"],
+    [64,68,"RB"],[64,95,"CB"],[64,132,"CB"],[64,159,"LB"],
+    [112,68,"RM"],[112,98,"CM"],[112,132,"CM"],[112,162,"LM"],
+    [158,98,"ST"],[158,135,"ST"],
+  ],
+  "352": [
+    [24,115,"GK"],
+    [58,80,"CB"],[58,115,"CB"],[58,150,"CB"],
+    [104,60,"RWB"],[104,92,"CM"],[104,115,"CM"],[104,138,"CM"],[104,170,"LWB"],
+    [156,98,"ST"],[156,135,"ST"],
+  ],
+};
+
+const FORMATION_B = [
+  [336,115,"GK"],
+  [292,68,"RB"],[292,95,"CB"],[292,132,"CB"],[292,159,"LB"],
+  [242,68,"RM"],[242,95,"CM"],[242,132,"CM"],[242,159,"LM"],
+  [200,95,"ST"],[200,135,"ST"],
+];
+
+const SHAPE_LABEL = { "433":"4-3-3", "4231":"4-2-3-1", "442":"4-4-2", "352":"3-5-2" };
+
+const GAME_PLANS = {
+  balanced: { dx: 0,   squeeze: 0,   overlay: "pass",
+    note: "Balanced shape — Team A holds its lines and looks to control possession." },
+  press:    { dx: 30,  squeeze: 0,   overlay: "press",
+    note: "High press — Team A pushes up to win the ball high and pen Team B in." },
+  counter:  { dx: -24, squeeze: 0,   overlay: "counter",
+    note: "Counter-attack — Team A sits a touch deeper, then springs forward fast on the break." },
+  bus:      { dx: -34, squeeze: 0.5, overlay: "block",
+    note: "Parking the bus — Team A drops into a deep, compact block to protect the lead." },
+};
+
+const BOARD = { ready: false, formation: "433", plan: "balanced", dots: [], anim: null };
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function makePlayer(parent, x, y, code, fill) {
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "tac-player");
+  g.setAttribute("transform", `translate(${x},${y})`);
+  g.setAttribute("tabindex", "0");
+  g.setAttribute("role", "img");
+  g.setAttribute("aria-label", `${code}: ${ROLE_INFO[code] || code}`);
+  const c = document.createElementNS(SVG_NS, "circle");
+  c.setAttribute("r", "8");
+  c.setAttribute("fill", fill);
+  c.setAttribute("stroke", "#fff");
+  c.setAttribute("stroke-width", "1.5");
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("text-anchor", "middle");
+  t.setAttribute("y", "2.3");
+  t.setAttribute("fill", "#fff");
+  t.setAttribute("font-size", "5.4");
+  t.setAttribute("font-family", "monospace");
+  t.setAttribute("font-weight", "bold");
+  t.textContent = code;
+  g.appendChild(c);
+  g.appendChild(t);
+  parent.appendChild(g);
+  return { el: g, code };
+}
+
+function planPositions(base) {
+  const plan = GAME_PLANS[BOARD.plan];
+  return base.map(([x, y, code]) => {
+    if (code === "GK") return [x, y, code];
+    const nx = Math.max(16, Math.min(168, x + plan.dx));
+    const ny = plan.squeeze ? 115 + (y - 115) * (1 - plan.squeeze) : y;
+    return [nx, ny, code];
+  });
+}
+
+function renderBoardOverlay() {
+  const ov = document.getElementById("tac-overlay");
+  if (!ov) return;
+  ov.innerHTML = "";
+  const plan = GAME_PLANS[BOARD.plan].overlay;
+  const add = (tag, attrs) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    ov.appendChild(el);
+    return el;
+  };
+  if (plan === "press") {
+    add("path", { class: "anim-press-line", d: "M150,115 L235,115", fill: "none",
+      stroke: "rgba(240,200,0,0.7)", "stroke-width": "1.8", "stroke-dasharray": "5,4",
+      "marker-end": "url(#presshead)" });
+    add("text", { x: "176", y: "108", fill: "rgba(240,200,0,0.85)",
+      "font-size": "6", "font-family": "monospace" }).textContent = "PRESS";
+  } else if (plan === "counter") {
+    add("path", { d: "M70,150 Q140,150 178,118", fill: "none",
+      stroke: "rgba(255,255,255,0.7)", "stroke-width": "1.8", "marker-end": "url(#arrowhead)" });
+    add("text", { x: "96", y: "165", fill: "rgba(255,255,255,0.8)",
+      "font-size": "6", "font-family": "monospace" }).textContent = "BREAK";
+  } else if (plan === "block") {
+    add("rect", { x: "30", y: "70", width: "70", height: "90", fill: "rgba(26,110,219,0.16)",
+      stroke: "rgba(26,110,219,0.5)", "stroke-width": "1", "stroke-dasharray": "4,3" });
+    add("text", { x: "34", y: "66", fill: "rgba(255,255,255,0.75)",
+      "font-size": "6", "font-family": "monospace" }).textContent = "LOW BLOCK";
+  } else {
+    add("path", { d: "M168,113 Q178,100 190,107", fill: "none",
+      stroke: "rgba(255,255,255,0.6)", "stroke-width": "1.8", "marker-end": "url(#arrowhead)" });
+  }
+}
+
+function layoutBoard(animate) {
+  const targets = planPositions(FORMATIONS_A[BOARD.formation]);
+  if (BOARD.anim) cancelAnimationFrame(BOARD.anim);
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const starts = BOARD.dots.map((d) => {
+    const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(d.el.getAttribute("transform"));
+    return m ? [parseFloat(m[1]), parseFloat(m[2])] : [targets[0][0], targets[0][1]];
+  });
+  BOARD.dots.forEach((d, i) => {
+    const code = targets[i][2];
+    d.code = code;
+    d.el.querySelector("text").textContent = code;
+    d.el.setAttribute("aria-label", `${code}: ${ROLE_INFO[code] || code}`);
+  });
+  if (!animate || reduce) {
+    BOARD.dots.forEach((d, i) =>
+      d.el.setAttribute("transform", `translate(${targets[i][0]},${targets[i][1]})`));
+    renderBoardOverlay();
+    return;
+  }
+  const dur = 480, t0 = performance.now();
+  const stepFn = (now) => {
+    const k = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    BOARD.dots.forEach((d, i) => {
+      const x = starts[i][0] + (targets[i][0] - starts[i][0]) * e;
+      const y = starts[i][1] + (targets[i][1] - starts[i][1]) * e;
+      d.el.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`);
+    });
+    if (k < 1) BOARD.anim = requestAnimationFrame(stepFn);
+    else { BOARD.anim = null; renderBoardOverlay(); }
+  };
+  renderBoardOverlay();
+  BOARD.anim = requestAnimationFrame(stepFn);
+}
+
+function updateBoardText() {
+  const title = document.getElementById("board-title");
+  if (title) title.textContent = `TACTICAL BOARD — ${SHAPE_LABEL[BOARD.formation]} vs 4-4-2`;
+  const explain = document.getElementById("board-explain");
+  if (explain) {
+    const shapeNote = {
+      "433": "Team A's 4-3-3 commits three forwards and a midfield three — width and attacking threat.",
+      "4231": "Team A's 4-2-3-1 double-pivot screens the defence while the No.10 feeds a lone striker.",
+      "442": "Team A's 4-4-2 is compact and balanced, with two banks of four and a strike pair.",
+      "352": "Team A's 3-5-2 packs midfield and uses wing-backs for width against the 4-4-2.",
+    }[BOARD.formation];
+    explain.textContent = `${shapeNote} ${GAME_PLANS[BOARD.plan].note}`;
+  }
+}
+
+function setFormation(key, btn) {
+  if (!FORMATIONS_A[key]) return;
+  BOARD.formation = key;
+  document.querySelectorAll("#formation-chips .chip-btn--select")
+    .forEach((b) => b.classList.remove("selected"));
+  if (btn) btn.classList.add("selected");
+  layoutBoard(true);
+  updateBoardText();
+}
+
+function setScenario(key, btn) {
+  if (!GAME_PLANS[key]) return;
+  BOARD.plan = key;
+  document.querySelectorAll("#scenario-chips .chip-btn--select")
+    .forEach((b) => b.classList.remove("selected"));
+  if (btn) btn.classList.add("selected");
+  layoutBoard(true);
+  updateBoardText();
+}
+
+function initBoardTooltip(svg) {
+  const tip = document.getElementById("board-tooltip");
+  const wrap = svg.closest(".tactical-board");
+  if (!tip || !wrap) return;
+  const show = (g) => {
+    tip.textContent = g.getAttribute("aria-label");
+    tip.hidden = false;
+    const gr = g.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    tip.style.left = (gr.left - wr.left + wrap.scrollLeft + gr.width / 2) + "px";
+    tip.style.top = (gr.top - wr.top - 6) + "px";
+  };
+  const hide = () => { tip.hidden = true; };
+  svg.addEventListener("pointerover", (e) => {
+    const g = e.target.closest(".tac-player"); if (g) show(g);
+  });
+  svg.addEventListener("pointerout", (e) => {
+    const g = e.target.closest(".tac-player"); if (g) hide();
+  });
+  svg.addEventListener("focusin", (e) => {
+    const g = e.target.closest(".tac-player"); if (g) show(g);
+  });
+  svg.addEventListener("focusout", hide);
+}
+
+function initTacticalBoard() {
+  const svg = document.getElementById("tac-svg");
+  const gA = document.getElementById("tac-a");
+  const gB = document.getElementById("tac-b");
+  if (!svg || !gA || !gB) return;
+  FORMATION_B.forEach(([x, y, code]) => makePlayer(gB, x, y, code, "#b56a00"));
+  BOARD.dots = FORMATIONS_A["433"].map(([x, y, code]) => makePlayer(gA, x, y, code, "#1a6edb"));
+  BOARD.ready = true;
+  layoutBoard(false);
+  updateBoardText();
+  initBoardTooltip(svg);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   INTERACTIVE OFFSIDE EXPLAINER
+   Drag the attacker / last defender, get a live verdict, press
+   Play to animate the pass, or pick a scenario.
+───────────────────────────────────────────────────────────── */
+
+const OFFSIDE = {
+  ready: false,
+  attX: 560, defX: 600,
+  ATT_Y: 150, DEF_Y: 252,
+  PASSER: { x: 305, y: 218 },
+  ATT_MIN: 360, ATT_MAX: 840,
+  DEF_MIN: 470, DEF_MAX: 800,
+  playing: false,
+  els: {},
+};
+
+const OFFSIDE_SCENARIOS = {
+  onside:  { att: 520, def: 600 },
+  level:   { att: 600, def: 600 },
+  offside: { att: 700, def: 590 },
+  var:     { att: 606, def: 600 },
+};
+
+function clampNum(x, min, max) { return Math.max(min, Math.min(max, x)); }
+
+function initOffsideLab() {
+  const svg = document.getElementById("offside-svg");
+  if (!svg) return;
+  const e = OFFSIDE.els;
+  e.attacker      = document.getElementById("off-attacker");
+  e.attackerCircle= document.getElementById("off-attacker-circle");
+  e.verdict       = document.getElementById("off-attacker-verdict");
+  e.defender      = document.getElementById("off-defender");
+  e.line          = document.getElementById("off-line");
+  e.lineLabel     = document.getElementById("off-line-label");
+  e.lineSub       = document.getElementById("off-line-sub");
+  e.passLine      = document.getElementById("off-pass-line");
+  e.ball          = document.getElementById("off-ball");
+  e.badge         = document.getElementById("off-badge");
+  e.hint          = document.getElementById("off-hint");
+  if (!e.attacker || !e.defender) return;
+  OFFSIDE.ready = true;
+
+  let active = null;
+  const svgX = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    return (clientX - r.left) / r.width * 900;
+  };
+  const onDown = (which) => (ev) => {
+    active = which;
+    svg.classList.add("is-dragging");
+    svg.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+  };
+  const onMove = (ev) => {
+    if (!active || OFFSIDE.playing) return;
+    const x = svgX(ev.clientX);
+    if (active === "att") OFFSIDE.attX = clampNum(x, OFFSIDE.ATT_MIN, OFFSIDE.ATT_MAX);
+    else OFFSIDE.defX = clampNum(x, OFFSIDE.DEF_MIN, OFFSIDE.DEF_MAX);
+    renderOffside();
+  };
+  const onUp = (ev) => {
+    if (!active) return;
+    active = null;
+    svg.classList.remove("is-dragging");
+    svg.releasePointerCapture?.(ev.pointerId);
+  };
+  e.attacker.addEventListener("pointerdown", onDown("att"));
+  e.defender.addEventListener("pointerdown", onDown("def"));
+  svg.addEventListener("pointermove", onMove);
+  svg.addEventListener("pointerup", onUp);
+  svg.addEventListener("pointerleave", onUp);
+  renderOffside();
+}
+
+function renderOffside() {
+  if (!OFFSIDE.ready) return;
+  const e = OFFSIDE.els;
+  const { attX, defX, ATT_Y, DEF_Y } = OFFSIDE;
+  e.attacker.setAttribute("transform", `translate(${attX},${ATT_Y})`);
+  e.defender.setAttribute("transform", `translate(${defX},${DEF_Y})`);
+  e.line.setAttribute("x1", defX);
+  e.line.setAttribute("x2", defX);
+  e.lineLabel.setAttribute("x", defX + 4);
+  e.lineSub.setAttribute("x", defX + 4);
+
+  const diff = attX - defX;           // >0 means ahead of the last defender
+  const offside = diff > 1;
+  const color = offside ? "#e84040" : "#36c270";
+  e.attackerCircle.setAttribute("stroke", color);
+  e.verdict.setAttribute("fill", color);
+  e.verdict.textContent = offside ? "OFFSIDE ✗" : diff < -2 ? "ONSIDE ✓" : "LEVEL ✓";
+  if (e.badge) {
+    e.badge.textContent = offside ? "OFFSIDE" : "ONSIDE";
+    e.badge.classList.toggle("is-off", offside);
+    e.badge.classList.toggle("is-on", !offside);
+  }
+  if (e.hint) {
+    e.hint.textContent = offside
+      ? "The attacker is ahead of the last defender at the moment of the pass — offside."
+      : Math.abs(diff) <= 2
+        ? "The attacker is level with the last defender — level counts as onside."
+        : "The attacker is behind the last defender — a legal position.";
+  }
+  // Reset the ball/pass-line until the user presses Play.
+  if (!OFFSIDE.playing && e.ball && e.passLine) {
+    e.ball.setAttribute("cx", OFFSIDE.PASSER.x);
+    e.ball.setAttribute("cy", OFFSIDE.PASSER.y);
+    e.passLine.setAttribute("opacity", "0");
+  }
+}
+
+function setOffsideScenario(name, btn) {
+  const s = OFFSIDE_SCENARIOS[name];
+  if (!s) return;
+  OFFSIDE.attX = s.att;
+  OFFSIDE.defX = s.def;
+  document.querySelectorAll(".offside-scn").forEach((b) => b.classList.remove("is-active"));
+  if (btn) btn.classList.add("is-active");
+  renderOffside();
+  playOffsidePass();
+}
+
+function playOffsidePass() {
+  if (!OFFSIDE.ready || OFFSIDE.playing) return;
+  const e = OFFSIDE.els;
+  const { PASSER, attX, ATT_Y } = OFFSIDE;
+  e.passLine.setAttribute("x1", PASSER.x);
+  e.passLine.setAttribute("y1", PASSER.y);
+  e.passLine.setAttribute("x2", attX);
+  e.passLine.setAttribute("y2", ATT_Y);
+  e.passLine.setAttribute("opacity", "1");
+
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) {
+    e.ball.setAttribute("cx", attX);
+    e.ball.setAttribute("cy", ATT_Y);
+    flashOffsideBadge();
+    return;
+  }
+  OFFSIDE.playing = true;
+  const startX = PASSER.x, startY = PASSER.y, dur = 650, t0 = performance.now();
+  function step(now) {
+    const k = Math.min(1, (now - t0) / dur);
+    const ease = 1 - Math.pow(1 - k, 2);
+    e.ball.setAttribute("cx", startX + (attX - startX) * ease);
+    e.ball.setAttribute("cy", startY + (ATT_Y - startY) * ease);
+    if (k < 1) requestAnimationFrame(step);
+    else { OFFSIDE.playing = false; flashOffsideBadge(); }
+  }
+  requestAnimationFrame(step);
+}
+
+function flashOffsideBadge() {
+  const badge = OFFSIDE.els.badge;
+  if (!badge) return;
+  badge.classList.remove("is-flash");
+  void badge.offsetWidth;
+  badge.classList.add("is-flash");
 }
 
 /* Checklist item toggle */
@@ -1725,7 +2218,6 @@ async function explainDecision() {
 ───────────────────────────────────────────────────────────── */
 async function explainMomentum() {
   const rawInput = document.getElementById("momentum-input")?.value?.trim();
-  const situation = rawInput || "The match momentum has shifted.";
 
   const outputId = "momentum-output";
 
@@ -1734,6 +2226,15 @@ async function explainMomentum() {
     scrollToOutput(outputId);
     return;
   }
+
+  // Combine the interactive state (event stack, meter, board) with any free text.
+  const story = typeof momentumStorySummary === "function" ? momentumStorySummary() : "";
+  const board = (typeof BOARD !== "undefined" && BOARD.ready)
+    ? `Team A is set up in a ${SHAPE_LABEL[BOARD.formation]} playing a "${BOARD.plan}" game plan against Team B's 4-4-2.`
+    : "";
+  const situation =
+    [story, board, rawInput].filter(Boolean).join(" ") ||
+    "The match momentum has shifted.";
 
   const userContext = getUserContext();
   const matchData = getMatchData();
@@ -1754,12 +2255,26 @@ async function explainMomentum() {
 /* ─────────────────────────────────────────────────────────────
    FEATURE 5 — RECOMMEND TEAMS
 ───────────────────────────────────────────────────────────── */
+const PREF_LABELS = {
+  underdog: "an underdog story",
+  famous_players: "famous star players",
+  host_country: "a host nation (USA, Canada, or Mexico)",
+  beautiful_teamwork: "beautiful teamwork and passing",
+  cultural_story: "a strong cultural story",
+  asian_team: "an Asian team (AFC confederation only)",
+  americas_team: "a team from the Americas (CONMEBOL or CONCACAF)",
+  european: "a European powerhouse (UEFA)",
+  defensive: "defensive discipline",
+  attacking: "an attacking style",
+  emotional_story: "an emotional story",
+};
+
 async function recommendTeams() {
   const selected = [
     ...document.querySelectorAll("#team-prefs .chip-btn--multi.selected"),
   ].map((b) => b.dataset.value);
   const prefs = selected.length
-    ? selected.join(", ")
+    ? selected.map((v) => PREF_LABELS[v] || v.replace(/_/g, " ")).join("; ")
     : "no specific preference";
 
   const userContext = getUserContext();

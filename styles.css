@@ -31,6 +31,17 @@ body {
   --border-strong:#b0aeaa;
   --pitch-green:  #1a5c2a;
   --pitch-mid:    #163d1a;
+  --pitch-light:  #1f6e32;
+  --pitch-deep:   #0f3d1c;
+  --pitch-bright: #2e9c4a;
+  --pitch-bg:     #eaf3ec;   /* faint grass tint for chips/eyebrows */
+  /* Mowing-stripe texture — alternating pitch bands (subtle) */
+  --turf-stripes: repeating-linear-gradient(
+                    90deg,
+                    rgba(26,92,42,0.045) 0px,
+                    rgba(26,92,42,0.045) 28px,
+                    rgba(26,92,42,0.00) 28px,
+                    rgba(26,92,42,0.00) 56px);
   --ibm-blue:     #1a6edb;
   --ibm-blue-dk:  #1558b0;
   --ibm-blue-bg:  #e8f0fb;
@@ -90,11 +101,34 @@ a:hover { text-decoration: underline; }
 /* ── Hero ──────────────────────────────────────────── */
 .hero {
   position: relative;
-  background: #0b2a5e;
+  /* Stadium atmosphere: floodlight glow over deep navy, grass band at the base */
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(120,170,255,0.30) 0%, rgba(120,170,255,0) 55%),
+    linear-gradient(180deg, #0b2a5e 0%, #0b2a5e 62%, #103a3f 86%, #14532b 100%);
   color: #fff;
   text-align: center;
   padding: 80px 24px 76px;
   overflow: hidden;
+}
+
+/* Mowing stripes washing up from the pitch at the bottom of the hero */
+.hero::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46%;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    105deg,
+    rgba(255,255,255,0.05) 0px,
+    rgba(255,255,255,0.05) 46px,
+    rgba(255,255,255,0.00) 46px,
+    rgba(255,255,255,0.00) 92px);
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 70%);
+          mask-image: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 70%);
+  z-index: 0;
 }
 
 .hero__pitch {
@@ -308,7 +342,9 @@ a:hover { text-decoration: underline; }
 
 /* ── Sections ──────────────────────────────────────── */
 .section { padding: 64px 0; }
-.section--alt { background: var(--bg-alt); }
+.section--alt {
+  background: var(--bg-alt);
+}
 
 /* Tab panels — hidden until activated by JS */
 section[data-tab]            { display: none; }
@@ -316,12 +352,24 @@ section[data-tab].tab-active { display: block; }
 
 .section-header { margin-bottom: 28px; }
 .section-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ibm-blue);
   margin-bottom: 6px;
+}
+/* Pitch-green accent tick before each eyebrow label */
+.section-eyebrow::before {
+  content: "";
+  width: 18px;
+  height: 3px;
+  background: var(--pitch-green);
+  border-radius: 2px;
+  flex: none;
 }
 .section__title  { margin-bottom: 8px; }
 .section__subtitle { color: var(--ink-muted); font-size: 0.97rem; max-width: 600px; }
@@ -1121,6 +1169,170 @@ section[data-tab].tab-active { display: block; }
   transition: color var(--transition);
 }
 
+/* ── Momentum: how-to guide row ─────────────────────── */
+.momentum-howto {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  background: var(--ibm-blue-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ibm-blue);
+}
+.momentum-howto > svg { flex-shrink: 0; color: var(--ibm-blue); margin-top: 2px; }
+.momentum-howto p { font-size: 0.86rem; color: var(--ink-muted); line-height: 1.6; margin: 0; }
+.momentum-howto__a { color: var(--ibm-blue); font-weight: 700; }
+.momentum-howto__b { color: var(--amber); font-weight: 700; }
+
+/* ── Momentum: draggable meter ──────────────────────── */
+.momentum-bar {
+  position: relative;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.momentum-bar:focus-visible { outline: 2px solid var(--ibm-blue); outline-offset: 2px; }
+.momentum-bar__handle {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 28px;
+  background: var(--bg-white);
+  border: 2px solid var(--ink);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  pointer-events: none;
+  transition: left 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+.momentum-bar.is-dragging .momentum-bar__handle,
+.momentum-bar.is-dragging .momentum-bar__fill-a,
+.momentum-bar.is-dragging .momentum-bar__fill-b { transition: none; }
+
+/* ── Momentum: event chips + timeline ───────────────── */
+.momentum-chip-label {
+  margin-top: 16px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.momentum-chip-hint { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.8; }
+.chip-btn.just-added {
+  background: var(--ibm-blue);
+  border-color: var(--ibm-blue);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.momentum-timeline { margin-top: 16px; }
+.momentum-timeline__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.momentum-timeline__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ibm-blue);
+}
+.momentum-reset {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: var(--bg-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-btn);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.momentum-reset:hover { background: var(--ibm-blue-bg); color: var(--ibm-blue); border-color: var(--ibm-blue); }
+.momentum-timeline__empty { font-size: 0.84rem; color: var(--ink-muted); font-style: italic; margin: 0; }
+.momentum-timeline__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.momentum-timeline__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  background: var(--bg-white);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ibm-blue);
+  font-size: 0.85rem;
+}
+.momentum-timeline__item--manual { border-left-color: var(--border-strong); }
+.momentum-timeline__num {
+  flex-shrink: 0;
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-alt);
+  font-size: 0.7rem; font-weight: 700; color: var(--ink-muted);
+}
+.momentum-timeline__item > svg { flex-shrink: 0; color: var(--ink-muted); }
+.momentum-timeline__txt { flex: 1; min-width: 0; color: var(--ink); }
+.momentum-timeline__delta { font-weight: 700; font-variant-numeric: tabular-nums; }
+.momentum-timeline__delta--a { color: var(--ibm-blue); }
+.momentum-timeline__delta--b { color: var(--amber); }
+.momentum-timeline__pct {
+  flex-shrink: 0;
+  font-size: 0.74rem; font-weight: 700;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 46px; text-align: right;
+}
+
+/* ── Tactical board: controls, players, tooltip ─────── */
+.tactical-board-wrap { position: relative; }
+.board-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  padding: 14px 0 16px;
+}
+.board-ctl-group { display: flex; flex-direction: column; gap: 7px; }
+.board-ctl-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.tactical-board { position: relative; }
+.tac-player { cursor: pointer; outline: none; }
+.tac-player circle { transition: r 0.15s ease, filter 0.15s ease; }
+.tac-player:hover circle,
+.tac-player:focus-visible circle {
+  r: 9.5;
+  filter: drop-shadow(0 0 3px rgba(255,255,255,0.6));
+}
+.tac-player:focus-visible circle { stroke: #ffe680; stroke-width: 2; }
+.board-tooltip {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, -100%);
+  max-width: 210px;
+  padding: 7px 10px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  border-radius: var(--radius-btn);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+  pointer-events: none;
+  white-space: normal;
+}
+.board-explain {
+  margin: 12px 0 0;
+  padding: 11px 14px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
+
 /* ── Tactical Board ─────────────────────────────────── */
 /* ── Tactical Board — scrollable SVG container ───────── */
 .tactical-board {
@@ -1621,12 +1833,126 @@ section[data-tab].tab-active { display: block; }
 
 /* 3. Offside attacker — pulsing red border */
 @keyframes pulseOffside {
-  0%, 100% { stroke-width: 2.5; }
-  50%       { stroke-width: 5; }
+  0%, 100% { stroke-width: 3; }
+  50%       { stroke-width: 6; }
 }
 .anim-offside-attacker {
   animation: pulseOffside 1.4s ease-in-out infinite;
 }
+
+/* ── Interactive Offside Explainer ───────────────────── */
+
+/* "Try it yourself" how-to banner */
+.offside-howto {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(232, 184, 0, 0.08);
+  border: 1px solid rgba(232, 184, 0, 0.28);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.offside-howto .icon { flex: 0 0 auto; margin-top: 2px; color: #e8b800; }
+.offside-howto p { margin: 0; }
+.offside-howto__a { color: #4d94ff; font-weight: 700; }
+.offside-howto__d { color: #e09a3c; font-weight: 700; }
+
+/* Scenario button row */
+.offside-scn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.offside-scn-row__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-right: 2px;
+}
+.offside-scn {
+  padding: 7px 13px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.08s;
+}
+.offside-scn:hover { background: rgba(255, 255, 255, 0.12); }
+.offside-scn:active { transform: scale(0.96); }
+.offside-scn.is-active {
+  background: rgba(232, 184, 0, 0.18);
+  border-color: #e8b800;
+  color: #e8b800;
+}
+
+/* Live verdict bar (Play button + badge) */
+.offside-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0 8px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 10px;
+}
+.offside-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #06210d;
+  background: #36c270;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, transform 0.08s;
+}
+.offside-play:hover { background: #45d27f; }
+.offside-play:active { transform: scale(0.97); }
+.offside-play .icon { color: #06210d; }
+
+.offside-verdict__readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.offside-badge {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border-radius: 6px;
+  color: #fff;
+}
+.offside-badge.is-on { background: #2a9d57; }
+.offside-badge.is-off { background: #d23636; }
+.offside-verdict__hint {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+@keyframes offsideBadgeFlash {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+.offside-badge.is-flash { animation: offsideBadgeFlash 0.45s ease-out; }
 
 /* 4. Pressing line (tactical board) — marching dashes (period = 5+4 = 9) */
 @keyframes marchAnts9 {
