@@ -15,8 +15,10 @@ const fs    = require('fs');
 const path  = require('path');
 
 const { watsonxChat }    = require('./lib/watsonx');
-const { checkRateLimit } = require('./lib/ratelimit');
 const { resolveOrigin }  = require('./lib/cors');
+// NOTE: lib/ratelimit.js is intentionally NOT used here. proxy.js is the local
+// dev server, where rate limiting would only ever throttle the developer.
+// The deployed serverless handlers (api/ai.js, api/ai-search.js) DO enforce it.
 
 const PORT              = process.env.PORT || 3001;
 const FOOTBALL_DATA_KEY = process.env.FOOTBALL_DATA_KEY;
@@ -83,8 +85,10 @@ const server = http.createServer((req, res) => {
 
   // OpenAI Responses API with web_search_preview tool
   if (req.url === '/api/ai-search' && req.method === 'POST') {
-    const rl = checkRateLimit(req);
-    if (!rl.allowed) { sendJson(res, 429, { error: { message: rl.message } }); return; }
+    // NOTE: proxy.js is the LOCAL dev server (single developer). The shared
+    // 30-req/hour limiter only ever throttles you during testing, so it is
+    // disabled here. Deployed traffic goes through api/ai-search.js, which
+    // keeps its own checkRateLimit — production protection is unaffected.
 
     let body = '';
     let byteCount = 0;
@@ -148,8 +152,7 @@ const server = http.createServer((req, res) => {
 
   // Granite proxy (IBM watsonx.ai) — keeps credentials server-side.
   if (req.url === '/api/ai' && req.method === 'POST') {
-    const rl = checkRateLimit(req);
-    if (!rl.allowed) { sendJson(res, 429, { error: { message: rl.message } }); return; }
+    // Local-only rate limiter disabled — see the note on /api/ai-search above.
 
     let body = '';
     let byteCount = 0;

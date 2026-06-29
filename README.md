@@ -70,7 +70,7 @@ So those features run a **two-stage hybrid**: `/api/ai-search` (GPT-4o) gathers 
 
 > **Live-score note:** football-data.org's free tier provides fixtures and final results but not minute-by-minute in-play scores. During a live match, GPT-4o web search is what brings the answer closest to the real-time situation; a paid match-data feed would be needed for a true live score stream.
 
-All API calls are routed **server-side** so that keys are never exposed in the browser or the public codebase. Confirmed match events from football-data.org are injected into every prompt as ground truth, so the AI references real incidents and is told to say so honestly when something cannot be confirmed — never to fabricate live facts. Off-topic questions are filtered out, the AI endpoints are rate-limited per user, and an origin allowlist (`lib/cors.js`) blocks other websites from calling the paid AI endpoints from the browser.
+All API calls are routed **server-side** so that keys are never exposed in the browser or the public codebase. Confirmed match events from football-data.org are injected into every prompt as ground truth, so the AI references real incidents and is told to say so honestly when something cannot be confirmed — never to fabricate live facts. Off-topic questions are filtered out, the **production** AI endpoints are rate-limited per user (30 requests/hour per IP), and an origin allowlist (`lib/cors.js`) blocks other websites from calling the paid AI endpoints from the browser. Rate limiting is applied only to the deployed serverless functions (`api/`); the local dev server (`proxy.js`) deliberately skips it so development and testing are never throttled — see [Rate limiting](#rate-limiting--local-vs-production).
 
 ### Tech Stack
 
@@ -155,7 +155,7 @@ kickoff-buddy/
 │   └── match/[id].js   #   /api/match/:id  — per-match events
 ├── lib/                # Shared helpers (used by proxy.js and api/)
 │   ├── watsonx.js      #   IBM watsonx.ai Granite client (IAM token + chat)
-│   ├── ratelimit.js    #   Per-IP rate limiting for the AI endpoints
+│   ├── ratelimit.js    #   Per-IP rate limiting — enforced by api/ only, NOT proxy.js
 │   └── cors.js         #   Origin allowlist — protects the paid AI endpoints
 ├── test-watsonx.js     # Dev script — checks watsonx.ai (Granite) connectivity
 ├── vercel.json         # Vercel function config (timeout)
@@ -177,6 +177,28 @@ The app runs in two interchangeable modes that share the same frontend:
 **Production (Vercel)** — the static files are served by Vercel's CDN and each file in `api/` becomes a serverless function. Set `FOOTBALL_DATA_KEY`, `OPENAI_API_KEY`, `WATSONX_API_KEY`, `WATSONX_PROJECT_ID`, and `WATSONX_URL` (and optionally `WATSONX_MODEL_ID` and `ALLOWED_ORIGINS`) in the Vercel project's Environment Variables (never in the repo). No build step is required.
 
 Both paths expose the identical `/api/*` surface, so the frontend code is the same in either mode.
+
+### Rate limiting — local vs production
+
+The two AI endpoints (`/api/ai` and `/api/ai-search`) are protected by a per-IP
+rate limiter in `lib/ratelimit.js` (**30 requests/hour per IP**, shared across both
+endpoints). It exists to stop strangers from spending the paid OpenAI / watsonx
+keys on the deployed site.
+
+That protection is applied **only in production**:
+
+| Mode | Server | Rate limited? | Why |
+|---|---|---|---|
+| **Local development** | `proxy.js` | **No** | Single developer — limiting would only throttle your own testing. |
+| **Production (Vercel)** | `api/ai.js`, `api/ai-search.js` | **Yes** | Public internet — protects the paid API keys from abuse. |
+
+So you can test every feature locally as many times as you like without ever
+hitting a `429 (Too Many Requests)`. If you *do* see a 429 while running locally,
+it is coming from the upstream provider itself (e.g. IBM watsonx Lite-plan
+concurrency limits), not from this app.
+
+> To change the production limit, edit `MAX_HITS` / `WINDOW_MS` in `lib/ratelimit.js`.
+> `proxy.js` does not import the limiter at all, so local behaviour is unaffected.
 
 ---
 

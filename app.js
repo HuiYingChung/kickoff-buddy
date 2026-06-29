@@ -331,8 +331,9 @@ function teamFixturesHtml(title, matches) {
 /* ─────────────────────────────────────────────────────────────
    OPENAI INTEGRATION
 ───────────────────────────────────────────────────────────── */
-// Shown when watsonx is rate-limited (429) even after the server's retries —
-// a transient free-tier capacity blip, not a real failure.
+// Shown when an AI request comes back 429 (Too Many Requests). NOTE: there is
+// no automatic retry anywhere — the call is made once and, on 429, we surface
+// this calm message instead of retrying or showing a raw error.
 const AI_BUSY_MESSAGE =
   "Buddy is getting a lot of questions right now. Give it a few seconds and ask again.";
 
@@ -349,8 +350,8 @@ async function callGranite(prompt) {
     }),
   });
   const data = await res.json().catch(() => ({}));
-  // Too Many Requests / capacity: the server already retried with backoff, so if
-  // it still comes through, show a calm "Buddy is busy" message, not a raw error.
+  // Too Many Requests / capacity: no retry happens here — a single 429 maps
+  // straight to a calm "Buddy is busy" message rather than a raw error.
   const errMsg = data.error?.message || "";
   if (res.status === 429 || /concurrent|too many|rate limit|limit \d/i.test(errMsg)) {
     throw new Error(AI_BUSY_MESSAGE);
