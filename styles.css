@@ -808,6 +808,8 @@ section[data-tab].tab-active { display: block; }
 .result-card__score-team:last-child { justify-content: flex-end; text-align: right; }
 /* Flags sit on a dark header here — soften the border so it reads on blue */
 .result-card__score-team .flag { box-shadow: 0 0 0 1px rgba(255,255,255,0.25); }
+/* Same treatment when a flag sits on a selected (blue) team chip */
+.chip-btn--select.selected .flag { box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
 .result-card__score-nums {
   display: flex;
   align-items: center;

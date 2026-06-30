@@ -1599,12 +1599,15 @@ function renderMatchdayTeamPicker() {
     return;
   }
   strip.innerHTML = recommendedTeams
-    .map(
-      (name, i) =>
-        `<button class="chip-btn chip-btn--select${i === 0 ? " selected" : ""}" data-value="${escapeHTML(name)}" onclick="selectChip('matchday-teams',this)">
-          <svg class="icon icon--xs" aria-hidden="true"><use href="#icon-pitch"/></svg> ${escapeHTML(name)}
-        </button>`,
-    )
+    .map((name, i) => {
+      // Use the country flag when we can resolve one; otherwise fall back to the
+      // generic pitch icon so the button is never iconless.
+      const flag = flagImg(crestForTeam(name, allMatchesCache || []), name, "flag--sm");
+      const icon = flag || `<svg class="icon icon--xs" aria-hidden="true"><use href="#icon-pitch"/></svg>`;
+      return `<button class="chip-btn chip-btn--select${i === 0 ? " selected" : ""}" data-value="${escapeHTML(name)}" onclick="selectChip('matchday-teams',this)">
+          ${icon} ${escapeHTML(name)}
+        </button>`;
+    })
     .join("");
   block.classList.remove("hidden");
 }
