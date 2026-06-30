@@ -797,12 +797,17 @@ section[data-tab].tab-active { display: block; }
   margin-top: 12px;
 }
 .result-card__score-team {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 0.82rem;
   font-weight: 600;
   color: rgba(255,255,255,0.75);
   flex: 1;
 }
-.result-card__score-team:last-child { text-align: right; }
+.result-card__score-team:last-child { justify-content: flex-end; text-align: right; }
+/* Flags sit on a dark header here — soften the border so it reads on blue */
+.result-card__score-team .flag { box-shadow: 0 0 0 1px rgba(255,255,255,0.25); }
 .result-card__score-nums {
   display: flex;
   align-items: center;
@@ -941,11 +946,27 @@ section[data-tab].tab-active { display: block; }
   padding: 16px 18px;
 }
 .team-card__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.97rem;
   font-weight: 700;
   color: var(--ink);
   margin-bottom: 5px;
 }
+
+/* ── Country flags (football-data crest SVGs) ── */
+.flag {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: auto;
+  object-fit: contain;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  vertical-align: -0.12em;
+}
+.flag--xs { height: 0.85em; margin-right: 6px; }
+.flag--sm { height: 1.05em; }
 .team-card__text {
   font-size: 0.86rem;
   color: var(--ink-muted);

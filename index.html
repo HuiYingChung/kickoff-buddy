@@ -1223,5 +1223,15 @@
 </nav>
 
 <script src="app.js"></script>
+
+<!-- Vercel Web Analytics (skip on localhost — the script only exists on the deployed domain) -->
+<script>
+  if (!["localhost", "127.0.0.1", ""].includes(location.hostname)) {
+    var s = document.createElement("script");
+    s.defer = true;
+    s.src = "/_vercel/insights/script.js";
+    document.body.appendChild(s);
+  }
+</script>
 </body>
 </html>

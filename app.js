@@ -138,6 +138,8 @@ function matchToData(m) {
     status:       m.status || "SCHEDULED",
     teamA:        home,
     teamB:        away,
+    crestA:       m.homeTeam?.crest || null,
+    crestB:       m.awayTeam?.crest || null,
     scoreA:       scoreHome ?? null,
     scoreB:       scoreAway ?? null,
     scoreDisplay: hasScore ? `${scoreHome}–${scoreAway}` : null,
@@ -216,6 +218,44 @@ function teamNameVariants(title) {
     .filter(Boolean);
 }
 
+// Does a team name match one of the candidate variants (fuzzy, accent-insensitive)?
+function teamMatchesVariants(name, variants) {
+  const n = normTeam(name);
+  if (!n) return false;
+  return variants.some(
+    (v) =>
+      n === v ||
+      (v.length >= 4 && n.includes(v)) ||
+      (n.length >= 4 && v.includes(n)),
+  );
+}
+
+// Resolve a team name (possibly a heading like "Italy or Germany") to its flag
+// crest URL, using the crests the football-data API already ships per team.
+function crestForTeam(name, matches) {
+  const list = Array.isArray(matches) ? matches : allMatchesCache || [];
+  const variants = teamNameVariants(name).map(normTeam).filter((v) => v.length >= 3);
+  if (!variants.length || !list.length) return null;
+  for (const m of list) {
+    if (teamMatchesVariants(m.homeTeam && m.homeTeam.name, variants) && m.homeTeam && m.homeTeam.crest) {
+      return m.homeTeam.crest;
+    }
+    if (teamMatchesVariants(m.awayTeam && m.awayTeam.name, variants) && m.awayTeam && m.awayTeam.crest) {
+      return m.awayTeam.crest;
+    }
+  }
+  return null;
+}
+
+// Render a country flag from a crest URL. Returns "" when no crest is available,
+// so callers can drop it in unconditionally. Self-removes if the image 404s.
+function flagImg(crest, name, extraClass) {
+  if (!crest) return "";
+  const safe = escapeHTML(name || "");
+  const cls = "flag" + (extraClass ? " " + extraClass : "");
+  return `<img class="${cls}" src="${escapeHTML(crest)}" alt="${safe}" title="${safe}" loading="lazy" onerror="this.remove()">`;
+}
+
 const STAGE_SHORT = {
   GROUP_STAGE: "Group",
   ROUND_OF_16: "R16",
@@ -269,6 +309,7 @@ function getTeamFixtures(title, matches) {
     }
     return {
       opp: opp.name || "TBD",
+      oppCrest: opp.crest || null,
       sf,
       sa,
       finished,
@@ -306,7 +347,7 @@ function teamFixturesHtml(title, matches) {
             : "";
         const meta = `${fmtFixtureDate(o.utc)}${o.stage ? " · " + o.stage : ""}`;
         return `<div class="fixtures__row">
-          <span class="fx-opp">vs ${escapeHTML(o.opp)}</span>
+          <span class="fx-opp">vs ${flagImg(o.oppCrest, o.opp, "flag--xs")}${escapeHTML(o.opp)}</span>
           <span class="fx-score">${score}</span>
           ${badge}
           <span class="fx-meta">${meta}</span>
@@ -319,7 +360,7 @@ function teamFixturesHtml(title, matches) {
     const meta = `${fmtFixtureDate(fx.next.utc, true)}${fx.next.stage ? " · " + fx.next.stage : ""}`;
     html += '<div class="fixtures__label">Next match</div>';
     html += `<div class="fixtures__row fixtures__row--next">
-      <span class="fx-opp">vs ${escapeHTML(fx.next.opp)}</span>
+      <span class="fx-opp">vs ${flagImg(fx.next.oppCrest, fx.next.opp, "flag--xs")}${escapeHTML(fx.next.opp)}</span>
       <span class="fx-meta">${meta}</span>
     </div>`;
   }
@@ -1296,13 +1337,13 @@ function ticketCard(matchData, userContext, subtitle, bodyHTML) {
 
   const scoreBlock = matchData.scoreDisplay ? `
     <div class="result-card__scoreboard">
-      <div class="result-card__score-team">${matchData.teamA}</div>
+      <div class="result-card__score-team">${flagImg(matchData.crestA, matchData.teamA, "flag--sm")}${matchData.teamA}</div>
       <div class="result-card__score-nums">
         <span class="result-card__score-num">${matchData.scoreA}</span>
         <span class="result-card__score-sep">–</span>
         <span class="result-card__score-num">${matchData.scoreB}</span>
       </div>
-      <div class="result-card__score-team">${matchData.teamB}</div>
+      <div class="result-card__score-team">${matchData.teamB}${flagImg(matchData.crestB, matchData.teamB, "flag--sm")}</div>
     </div>
     <div class="result-card__score-meta">
       ${statusLabel}
@@ -1365,8 +1406,9 @@ function watchList(items) {
 }
 
 /* Build a team recommendation card */
-function teamCard(name, text) {
-  return `<div class="team-card"><div class="team-card__name">${name}</div><div class="team-card__text">${text}</div></div>`;
+function teamCard(name, text, crest) {
+  const flag = flagImg(crest, name, "flag--sm");
+  return `<div class="team-card"><div class="team-card__name">${flag}${name}</div><div class="team-card__text">${text}</div></div>`;
 }
 
 /* Build an interactive checklist item */
@@ -3030,6 +3072,7 @@ function mockTeams(userContext, prefs) {
      <p style="margin-bottom:8px"><strong>Why for a beginner:</strong> ${t.beginner}</p>
      <p><strong>What to watch:</strong> ${t.watch}</p>` +
           teamFixturesHtml(t.name, allMatchesCache || []),
+        crestForTeam(t.name, allMatchesCache || []),
       ),
     )
     .join("");
