@@ -30,7 +30,7 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const rl = checkRateLimit(req);
+  const rl = await checkRateLimit(req);
   if (!rl.allowed) {
     res.status(429).json({ error: { message: rl.message } });
     return;
